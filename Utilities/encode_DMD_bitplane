@@ -2,9 +2,9 @@
 #======================================================================
 #                    U T I L I T I E S / E N C O D E _ D M D _ B I T P L A N E 
 #                    doc: Fri Jan  2 10:08:34 2026
-#                    dlm: Sat Feb 21 13:32:38 2026
+#                    dlm: Mon Mar  2 15:41:13 2026
 #                    (c) 2026 idealjoker@mailbox.org
-#                    uE-Info: 47 26 NIL 0 0 72 2 2 4 NIL ofnI
+#                    uE-Info: 169 54 NIL 0 0 72 2 2 4 NIL ofnI
 #======================================================================
 
 # HISTORY:
@@ -45,6 +45,7 @@
 # Feb  8, 2026: - added gamma of human vision, for consistency with -g1 (default)
 # Feb 20, 2026: - added -n
 # Feb 21, 2026: - added -w
+# Mar  2, 2026: - added -f)lip horizontally
 # HISTORY END
 
 # RELEASE NOTES:
@@ -80,23 +81,25 @@ die("Usage: $0 \n" .
 		"\t[suppress -w)arnings]\n" .
 		"\t[-n)umeric output on -v3]\n" .
 		"\t[brightness-l)evels <n[4]>] [-h)alftone 5-level driver]\n" .
+		"\t[-f)lip image horizontally]\n" . 
 		"\t[apply -g)amma <correction>\n" .
 		"\t[apply constrast-s)tretching]\n" .
 		"\t[apply histogram-e)qualization\n" .
 		"\t[use alternate -i)nterlace <method[0:none,1:cols,2:rows]>]\n" .
 		"\t\t<bitplane> <image file>\n")
-	        unless (getopts('g:hei:l:nQsv:w') && @ARGV==2);
+	        unless (getopts('fg:hei:l:nQsv:w') && @ARGV==2);
 
 my $bitplane 	= $ARGV[0];
 my $image_file	= $ARGV[1];
 
-our $opt_Q;
+our $opt_f;
 our $opt_e;
 our $opt_g;
 our $opt_h;
 our $opt_i = -1 unless defined($opt_i);
 our $opt_l;
 our $opt_n;
+our $opt_Q;
 our $opt_s;
 our $opt_v =  0 unless defined($opt_v);
 our $opt_w;
@@ -163,7 +166,8 @@ sub gam($)																# apply user-specified gamma correction
 
 for (my($y)=0; $y<32; $y++) {											# create relative luminance (grayscale) image
 	for (my($x)=0; $x<128; $x++) {										# (correct for gamma compression in source)
-		my($pixel) = $image->getpixel(x=>$x,y=>$y);						
+		my($pixel) = $opt_f ? $image->getpixel(x=>(127-$x),y=>$y)
+							: $image->getpixel(x=>$x,y=>$y);
 		my($R,$G,$B,$A) = $pixel->rgba();
 		$R = lin($R/0xFF);												# linearize normalized R/G/B values
 		$G = lin($G/0xFF);
