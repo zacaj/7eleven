@@ -2,9 +2,9 @@
 #======================================================================
 #                    U T I L I T I E S / E N C O D E _ D M D _ B I T P L A N E 
 #                    doc: Fri Jan  2 10:08:34 2026
-#                    dlm: Mon Mar  2 15:41:13 2026
+#                    dlm: Fri Mar 20 09:00:17 2026
 #                    (c) 2026 idealjoker@mailbox.org
-#                    uE-Info: 169 54 NIL 0 0 72 2 2 4 NIL ofnI
+#                    uE-Info: 50 53 NIL 0 0 72 2 2 4 NIL ofnI
 #======================================================================
 
 # HISTORY:
@@ -46,6 +46,8 @@
 # Feb 20, 2026: - added -n
 # Feb 21, 2026: - added -w
 # Mar  2, 2026: - added -f)lip horizontally
+# Mar 19, 2026: - added list of values to -v2 output
+# Mar 20, 2026: - BUG: debug values output regardless
 # HISTORY END
 
 # RELEASE NOTES:
@@ -196,6 +198,14 @@ if ($opt_e) {															# HISTOGRAM EQUALIZATION
 #	}
 	printf(STDERR "\tInput Brightness   = \$%02X .. \$%02X (%d distinct levels)\n",$Ivec[0],$Ivec[$#Ivec],$nLvl)
 		if ($opt_v > 1);
+	if ($nLvl <= 8 && $opt_v > 1) {
+		print(STDERR "\t\tValues = ");
+		foreach my $k (keys(%iVals)) {
+			printf(STDERR "\$%02X ",$k);
+		}
+		print(STDERR "\n");
+	}
+			
 	die("$image_file: insufficient color depth ($nLvl distinct levels) for -l $opt_l histogram equalization\n")
 		if ($opt_l == 5 && $nLvl < 8) ||
 		   ($opt_l != 4 && $nLvl < $opt_l);
@@ -251,6 +261,13 @@ if ($opt_e) {															# HISTOGRAM EQUALIZATION
 	my($nLvl) = scalar(keys(%iVals));
 	printf(STDERR "\tInput Brightness   = \$%02X .. \$%02X (%d distinct levels)\n",$minI,$maxI,$nLvl)
 		if ($opt_v > 1);
+	if ($nLvl <= 8 && $opt_v > 1) {
+		print(STDERR "\t\tValues     = ");
+		foreach my $k (sort { $a <=> $b } keys(%iVals)) {
+			printf(STDERR "\$%02X ",$k);
+		}
+		print(STDERR "\n");
+	}
 # 	ERROR IS INCORRECT FOR GAME LEVELS
 #	die("$image_file: insufficient color depth ($nLvl distinct levels) for -l $opt_l\n")
 #		if ($opt_l == 5 && $nLvl<8) ||
