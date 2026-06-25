@@ -1,9 +1,9 @@
 #======================================================================
 #					 D 7 1 1 . P M 
 #					 doc: Fri May 10 17:13:17 2019
-#					 dlm: Mon Jan 26 21:27:13 2026
+#					 dlm: Sat Jun  6 11:49:42 2026
 #					 (c) 2019 idealjoker@mailbox.org
-#                    uE-Info: 332 76 NIL 0 0 72 10 2 4 NIL ofnI
+#                    uE-Info: 2874 36 NIL 0 0 72 10 2 4 NIL ofnI
 #======================================================================
 
 # Williams System 6-11 Disassembler
@@ -330,6 +330,7 @@
 #				  - added labeling to def_wordblock_hex
 #	Oct 22, 2025: - added support for <arg>:nolabel hint
 #	Jan 26, 2026: - adapted to use implicit :nolabel for e.g. 1:#StringSpec#
+#	Jun  6, 2026: - added def_wordbyteblock_hex
 # END OF HISTORY
 
 # TO-DO:
@@ -2851,6 +2852,31 @@ sub def_wordblock_hex(@)                                                        
     }
     insert_empty_line($Address-2);
 }
+
+
+sub def_wordbyteblock_hex(@)                                                   # data word+bytes (not pointers)
+{
+    my($nbytes,$lbl,$divider_label,$rem,$allow_labeling) = @_;
+    die unless defined($Address);
+    setLabel($lbl,$Address);
+    $Address+=$nbytes,return unless ($Address>=$MIN_ROM_ADDR && $Address<=$MAX_ROM_ADDR);
+    insert_divider($Address,$divider_label) if defined($divider_label);
+
+    $OP[$Address] = '.DWB'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
+    $OPA[$Address][0] = sprintf($allow_labeling?'$%04X':'$%04X!',WORD($Address));
+    $OPA[$Address][1] = sprintf('$%02X!',BYTE($Address+2));
+	$REM[$Address] = $rem unless defined($REM[$Address]);
+    $decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+
+    for (my($i)=2; $i<$nbytes; $i+=2) {
+        $OP[$Address] = '.DW'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
+        $OPA[$Address][0] = sprintf($allow_labeling?'$%04X':'$%04X!',WORD($Address));
+	    $OPA[$Address][1] = sprintf('$%02X!',BYTE($Address+2));
+        $decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+    }
+    insert_empty_line($Address-3);
+}
+
 
 sub def_ptrblock_hex(@)                                                         # block with pointers (not regular data words)
 {

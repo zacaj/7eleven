@@ -1,9 +1,9 @@
 ======================================================================
                     N O T E S / R E A D M E . W P C 
                     doc: Wed Aug 28 09:00:38 2024
-                    dlm: Mon Jan 26 08:01:56 2026
+                    dlm: Sat Jun  6 14:00:12 2026
                     (c) 2024 idealjoker@mailbox.orgn
-                    uE-Info: 514 33 NIL 0 0 72 2 2 4 NIL ofnI
+                    uE-Info: 100 2 NIL 0 0 72 2 2 4 NIL ofnI
 ======================================================================
 
 =Memory=
@@ -95,6 +95,12 @@ PG      = int(ROM_addr / 0x4000) except for FE=RAM and FF=8000-FFFF
 ADDR    = (ROM_addr % 0x4000) + 0x4000
 
 
+-ROM Checksum-
+
+- 
+
+
+
 -RAM-
 
 .Player Memory Data.
@@ -118,11 +124,11 @@ ADDR    = (ROM_addr % 0x4000) + 0x4000
 - buffer bytes:
     00-07                   lamps
     08-15                   blinkbuf
-    16-23                   flags
-    24-31                   ??? (8 bytes)
-    32      RAM_68          lamp blink state??
+    16-23					player flags
+	24-31                   ??? (NOT Flag#40-7F))
+    32      RAM_68          lamp blink speed
     33                      flags: $01 player_Gamestart_event executed
-    34-35                   list of values that update audits when game is aborted on ball 3??
+    34-35                   total(?) ball time in seconds
     36                      number of tickets earned??
 
 - player game data:
@@ -244,6 +250,8 @@ ADDR    = (ROM_addr % 0x4000) + 0x4000
 
 =Lamps and Flags (Bits)=
 
+-Bit Numbers-
+
 - the Bitshifter uses 1-based bit numbers
 - Lamps are numbered from 1 for consistency with manual
 - Flags are NOT numbered from 1 
@@ -251,12 +259,48 @@ ADDR    = (ROM_addr % 0x4000) + 0x4000
     Bit Id          7eleven     
     ----------------------------
     $00-$3F         Lamp#01-40  
-    $40-$7F         Flag#00-3F (Flag#00 is not usable?)
+    $40-$7F         Flag#00-3F (Flag#00 is not usable)
     $80-$BF         illegal
-    $C0-$FF         Flag#40-7F (Flag#40 is not usable?)
+    $C0-$FF         Flag#40-7F (Flag#40 is not usable)
 
 
--Bit Buffers / Lamp Matrices-
+-Flags-
+
+Flag#00 	invalid
+Flag#01-3F	player flags
+Flag#40		invalid
+Flag#41-7F	temporary flags (shared flags)
+
+
+-Bit Initialization / Memory-
+
+- 3 bit buffers:
+	1) Lamps
+	2) Blink Buffer
+	3) Player Flags
+
+- all three are initialized with WPC byte tables
+	- flag bits:
+		%01		memory
+		%10		set (instead of clear)
+	- byte values:
+		%00		cleared at start of each ball
+		%01		cleared at game start; not touched between balls
+		%10		set at start of each ball
+		%11		set at gamestart, not touched between balls
+	- lamp and blink tables have 65 elts
+		Lamp#00 (invalid)
+		Lamp#01-64
+	- flags table
+		- can be partial
+			Flag#00	(invalid)
+			Flag#01-?? 
+		- flags that are not in table (%01)
+			- cleared at game start
+			- on memory
+
+
+-Lamp Buffers / Matrices-
 
     offset  meaning
     ------------------------------------------------------------
@@ -271,6 +315,9 @@ ADDR    = (ROM_addr % 0x4000) + 0x4000
     $40     blink matrix (independent of locical state)
     $48     Flag#00-3F
     $50     Flag#40-7F
+
+
+
 
 - turn on lamps / set flags:
     1) Lamp:            !lampOn <Lamp> 
