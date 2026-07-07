@@ -1,9 +1,9 @@
 #======================================================================
 #                    D 7 1 1 . W P C 
 #                    doc: Thu Jul 18 06:34:49 2024
-#                    dlm: Tue Jul  8 14:51:46 2025
+#                    dlm: Tue Feb 17 14:29:04 2026
 #                    (c) 2024 idealjoker@mailbox.org
-#                    uE-Info: 122 54 NIL 0 0 72 10 2 4 NIL ofnI
+#                    uE-Info: 166 54 NIL 0 0 72 10 2 4 NIL ofnI
 #======================================================================
 
 # WPC Disassembly 
@@ -95,7 +95,7 @@
 #				  - greatly improved system pointer decoding
 #	Jun 21, 2025: - added def_WPC_bitgroup_table
 #	Jun 22, 2025: - made it work
-#	Jun 23, 2025: - added def_WPC_FXtable()
+#	Jun 23, 2025: - added def_WPC_lampFXtable()
 #				  - re-added goood bitgroup table decoding
 #				  - reduced WPC table indents to same as code
 #	Jun 24, 2025: - added WPC stuff
@@ -120,6 +120,50 @@
 #				  - added custom labels for WPC tables
 #				  - BUG: custom labels were broken
 #	Jul  8, 2025: - BUG: lamp group range is too short
+#	Jul 20, 2025: - added defSound()
+#				  - added additional inCode refs
+#	Jul 23, 2025: - adapted to change Sol# -> SolCmd#
+#				  - adapted to change FX -> lampFX
+#	Jul 27, 2025: - added LD operand labels for inCode_refs
+#	Jul 28, 2025: - BUG: in-code refs were not immediate
+#				  - removed unused rem assignment statements
+#				  - BUG: in-code refs did not have PG prefix encoded
+#	Jul 30, 2025: - changed FX# to LampFX#
+#	Jul 31, 2025: - BUG: bitgroup def byte $81 $81 indicates Bitgroup, not Lamp
+#				  - BUG: Bitgroup#00 was disallowed
+#				  - added operand-definition in comments to WPC magic
+#	Aug 11, 2025: - improvements
+#	Aug 12, 2025: - many labels changed
+#				  - added disassembly of DisplayFX table
+#				  - added disassembly of adjustment tables
+#	Aug 13, 2025: - improved string table decoding
+#				  - updated disassemble_DMD_frame_table
+#	Aug 20, 2025: - BUG: two of the INIT_MEM tables were wrong
+#	Aug ??, 2025: - added boolean while loops
+#	Aug 24, 2025: - added error message for invalid argument substitutions
+#	Aug 26, 2025: - improved error messages
+#	Aug 27, 2025: - added hint output for inCode refs
+#				  - BUG: .STR<len> did not handle string-end correctly
+#				  - added balltrough switch table
+#	Aug 30, 2025: - added another sys param
+#	Sep  6, 2025: - typo HEAP_STARTA
+#	Sep 21, 2025: - added checksum block decoding
+#	Sep 27, 2025: - label name change
+#	Oct  8, 2025: - changed RELEASE_DATE to BUILD_DATE
+#				  - added APPLE_VERSION
+#	Oct 19, 2025: - added decimalization to argument magic
+#	Oct 22, 2025: - added support for :nolabel hint
+#	Dec 26, 2025: - added RTS empty line even if RTS is not full comment
+#				  - added \n comment magic for empty line
+#				  - renamed routine
+#				  - added decoding of DMD frames
+#	Dec 27, 2025: - added compression info for DMD frames
+#	Jan 26, 2026: - added Lamp# and DisplayFX# magic
+#				  - decode LampFX byte#10 as DisplayFX
+#				  - added StringSpec#, Thread# magic
+#	Feb 17, 2026: - made RTS in comment only add newline if it stands alone
+#				  - BUG: \n in comments only handled properly without
+#						 other magic in same statement
 # END OF HISTORY 
 
 #----------------------------------------------------------------------
@@ -391,6 +435,33 @@ sub process_object_file($)													# execute this early on, because it defin
 # WPC Disassembly Routines
 #======================================================================
 
+#----------------------------------------------------------------------
+# In-Code References
+#
+#	- this is done as a first step, before anything else has been
+#	  disassembled
+#
+#	- references are assumed to point to data (no code following)
+#
+#	- patterns are derived from T2; it is quite likely that other
+#	  programmers use additional patterns (e.g. LDX & LDA)
+#
+#	- patterns
+#		1) LDY #<addr> & LDA #<page>	(creates new label if there is none)
+#		2) LDX #<addr> & LDB #<page>	(creates new label if there is none)
+#		3) LDY #<addr> & !longJSR <ref> (not matched unless label exists)
+#		4) LDX #<addr> & !longJSR <ref> (not matched unless label exists)
+#
+#	- pattern order matters, because LDY has the same opcode as
+#	  LDX but with a prefix byte
+#		- the test for LDX will match both LDX and LDY; therefore
+#		  LDY must come first
+#		- however, the opcode for LDY is also equal to a possible 
+#		  post-byte of PSH/PUL followed by an LDX; therefore
+#		  false positives are possible for LDY, too; this is filtered
+#		  by the check for VALID_ROMREF()
+#----------------------------------------------------------------------
+
 sub VALID_ROMREF(@)
 {
 	my($addr) = @_;
@@ -405,26 +476,7 @@ sub disassemble_inCode_refs($$$)
 	my($RPG,$fa,$la) = @_;
 ##	printf(STDERR "disassemble_inCode_refs(%02X,%04X,%04X)\n",@_);
 
-	for (my($addr)=$fa; $addr<=$la-5; $addr++) {
-		next unless BYTE($addr)   == 0x8E &&								# LDX #
-					BYTE($addr+3) == 0xC6 &&								# LDB #
-					BYTE($addr+4)>=$start_page &&
-						(BYTE($addr+4)==0xFF && WORD($addr+1)>=0x8000 &&  WORD($addr+1)<=0xFFFF ||
-						 BYTE($addr+4)<=0x3D && WORD($addr+1)>=0x4000 &&  WORD($addr+1)<=0x7FFF);
-
-		my($pointee_addr) = WORD($addr+1);
-		my($pointee_pg)	  = BYTE($addr+4);
-		my($type) 		  = ($pointee_addr>=0x8000) ? 'SYSTEM_XB' : 'GAME_XB';
-		my($pointee_lbl)  = sprintf('UNKNOWN_%s_REF_%04X',$type,$addr);
-		select_WPC_RPG($pointee_pg);
-		my($usr_lbl) 	  = $LBL[$pointee_addr];
-		$pointee_lbl 	  = $usr_lbl if defined($usr_lbl);
-		setLabel($pointee_lbl,$pointee_addr,$pointee_pg);
-		$REM[$addr] = $rem unless defined($REM[$addr]);
-		select_WPC_RPG($RPG);
-    }
-
-	for (my($addr)=$fa; $addr<=$la-5; $addr++) {
+	for (my($addr)=$fa; $addr<=$la-6; $addr++) {							# pattern 1
 		next unless WORD($addr)   == 0x108E &&								# LDY #
 					BYTE($addr+4) == 0x86 &&								# LDA #
 					BYTE($addr+5)>=$start_page &&
@@ -434,18 +486,85 @@ sub disassemble_inCode_refs($$$)
 		my($pointee_addr) = WORD($addr+2);
 		my($pointee_pg)	  = BYTE($addr+5);
 		my($type) 		  = ($pointee_addr>=0x8000) ? 'SYSTEM_YA' : 'GAME_YA';
-		my($pointee_lbl)  = sprintf('UNKNOWN_%s_REF_%04X',$type,$addr);
+		my($pointee_lbl)  = sprintf('%02X:UNKNOWN_%s_REF_%04X',$pointee_pg,$type,$pointee_addr);
 		select_WPC_RPG($pointee_pg);
 		my($usr_lbl) 	  = $LBL[$pointee_addr];
 		$pointee_lbl 	  = $usr_lbl if defined($usr_lbl);
+		printf(STDERR "Hint: in-code LDY/LDA ref at %02X:%04X: possible code %02X:%04X\n",
+				$RPG,$addr,$pointee_pg,$pointee_addr)
+			unless defined($usr_lbl);
 		setLabel($pointee_lbl,$pointee_addr,$pointee_pg);
-		$REM[$addr] = $rem unless defined($REM[$addr]);
 		select_WPC_RPG($RPG);
+		$OPA[$addr][0] = "#$pointee_lbl";
+		$OPA[$addr+4][0] = "#${pointee_lbl}{ROMpage}";
+    }
+
+	for (my($addr)=$fa; $addr<=$la-5; $addr++) {							# pattern 2
+		next unless BYTE($addr)   == 0x8E &&								# LDX #
+					BYTE($addr+3) == 0xC6 &&								# LDB #
+					BYTE($addr+4)>=$start_page &&
+						(BYTE($addr+4)==0xFF && WORD($addr+1)>=0x8000 &&  WORD($addr+1)<=0xFFFF ||
+						 BYTE($addr+4)<=0x3D && WORD($addr+1)>=0x4000 &&  WORD($addr+1)<=0x7FFF);
+#		die if $_cur_RPG == 0x3B && $addr == 0x708E;
+
+		my($pointee_addr) = WORD($addr+1);
+		my($pointee_pg)	  = BYTE($addr+4);
+		my($type) 		  = ($pointee_addr>=0x8000) ? 'SYSTEM_XB' : 'GAME_XB';
+		my($pointee_lbl)  = sprintf('%02X:UNKNOWN_%s_REF_%04X',$pointee_pg,$type,$pointee_addr);
+		select_WPC_RPG($pointee_pg);
+		my($usr_lbl) 	  = $LBL[$pointee_addr];
+		$pointee_lbl 	  = $usr_lbl if defined($usr_lbl);
+		printf(STDERR "Hint: in-code LDX/LDB ref at %02X:%04X: possible code at %02X:%04X\n",
+				$RPG,$addr,$pointee_pg,$pointee_addr)
+			unless defined($usr_lbl);
+		setLabel($pointee_lbl,$pointee_addr,$pointee_pg);
+		select_WPC_RPG($RPG);
+		$OPA[$addr][0] = "#$pointee_lbl";
+		$OPA[$addr+3][0] = "#${pointee_lbl}{ROMpage}";
+##		die("setLabel($pointee_lbl,$pointee_addr,$pointee_pg); $OP[$addr] @{$OPA[$addr]}") if $_cur_RPG == 0x3B && $addr == 0x708E;
+    }
+
+	for (my($addr)=$fa; $addr<=$la-9; $addr++) {							# pattern 3
+		next unless WORD($addr)   == 0x108E &&								# LDY #
+					BYTE($addr+4) == 0xBD && WORD($addr+5) == $Lbl{longJSR} && # !longJSR
+					BYTE($addr+9)>=$start_page &&
+						(BYTE($addr+9)==0xFF && WORD($addr+2)>=0x8000 &&  WORD($addr+2)<=0xFFFF ||
+						 BYTE($addr+9)<=0x3D && WORD($addr+2)>=0x4000 &&  WORD($addr+2)<=0x7FFF);
+
+		my($pointee_addr) = WORD($addr+2);
+        next if defined($WPC_INTERPAGE_REF[$_cur_RPG][$pointee_addr]);
+		my($pointee_pg) = BYTE($addr+9);
+		select_WPC_RPG($pointee_pg);
+		if (defined($LBL[$pointee_addr])) {
+			setLabel($LBL[$pointee_addr],$pointee_addr,$pointee_pg);
+		}
+		select_WPC_RPG($RPG);
+		$WPC_INTERPAGE_REF[$_cur_RPG][$pointee_addr] = $pointee_pg;			# reference in current pg to pointee_addr in pointee_pg
+    }
+
+	for (my($addr)=$fa; $addr<=$la-8; $addr++) {							# pattern 4
+		next unless BYTE($addr)   == 0x8E &&								# LDX #
+					BYTE($addr+3) == 0xBD && WORD($addr+4) == $Lbl{longJSR} && # !longJSR
+					BYTE($addr+8)>=$start_page &&
+						(BYTE($addr+8)==0xFF && WORD($addr+1)>=0x8000 &&  WORD($addr+1)<=0xFFFF ||
+						 BYTE($addr+8)<=0x3D && WORD($addr+1)>=0x4000 &&  WORD($addr+1)<=0x7FFF);
+		my($pointee_addr) = WORD($addr+1);
+        next if defined($WPC_INTERPAGE_REF[$_cur_RPG][$pointee_addr]);
+        my($pointee_pg) = BYTE($addr+8);
+        select_WPC_RPG($pointee_pg);
+		if (defined($LBL[$pointee_addr])) {
+			setLabel($LBL[$pointee_addr],$pointee_addr,$pointee_pg);
+		}
+		select_WPC_RPG($RPG);
+        $WPC_INTERPAGE_REF[$_cur_RPG][$pointee_addr] = $pointee_pg;     	# reference in current pg to pointee_addr in pointee_pg
     }
 }
 
+#----------------------------------------------------------------------
+# System Calls
+#----------------------------------------------------------------------
 
-sub disassemble_syscalls()													# execute this after all syscalls have been defined
+sub disassemble_syscalls()												# execute this after all syscalls have been defined
 {
 	for (my($sc)=0; $sc<@SYSCALL; $sc++) {
 		select_WPC_RPG(0x3B) if ($SC_NOTE[$sc] == 3);						# NOTE 3: syscall tied to PG#3B
@@ -465,6 +584,9 @@ sub disassemble_syscalls()													# execute this after all syscalls have be
 	}
 }
 
+#----------------------------------------------------------------------
+# CPU Vectors
+#----------------------------------------------------------------------
 
 sub disassemble_CPU_vectors()
 {
@@ -481,6 +603,9 @@ sub disassemble_CPU_vectors()
 	def_code_ptr('RST_vector','RST_handler','CPU Vector Handler');              
 }
 
+#----------------------------------------------------------------------
+# System Pointers
+#----------------------------------------------------------------------
 
 sub disassemble_system_pointers()
 {
@@ -505,169 +630,175 @@ sub disassemble_system_pointers()
 	#------------------------------
 
 	$Address = 0x81A2; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=SOLCMD_TABLE');
-		def_WPC_table(undef,'Solenoid Command Table');
+		$Address = def_WPC_ref('=SOLCMD_TABLE');
+		def_WPC_table(undef,'SOLENOID COMMAND TABLE');
 	$Address = 0x81A5; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=SOLCMD_TABLE_ALT');
-		def_WPC_table(undef,'Solenoid Command Table1');
+		$Address = def_WPC_ref('=SOLCMD_TABLE_ALT');
+		def_WPC_table(undef,'SOLENOID COMMAND TABLE');
 	$Address = 0x81AB; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=FLASHER_TABLE_1'); 
-		def_WPC_table(undef,'Flasher Command Table');
+		$Address = def_WPC_ref('=FLASHER_TABLE_1'); 
+		def_WPC_table(undef,'FLASHER COMMAND TABLE');
 	$Address = 0x81B0; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=FLASHER_TABLE_2');
-		def_WPC_table(undef,'Flasher Command Table');
+		$Address = def_WPC_ref('=FLASHER_TABLE_2');
+		def_WPC_table(undef,'FLASHER COMMAND TABLE');
 	$Address = 0x81B3; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=UNKNOWN_BYTELIST_TABLE_%04X',$Address));
-		def_WPC_byteList_table(undef,'Bytelist Table');
+		$Address = def_WPC_ref(sprintf('=UNKNOWN_BYTELIST_TABLE_%04X',$Address));
+		def_WPC_byteList_table(undef,'Unknown Bytelist Table');
 	$Address = 0x81B6; push(@skipAddr,$Address);					
-	$Address = def_WPC_ref('=BITSHIFTER_LAMPMATRIX_LUT');
+		$Address = def_WPC_ref('=BITSHIFTER_LAMPMATRIX_LOOKUP_TABLE');
 		def_byteblock_hex(65);
 	$Address = 0x81C2; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=BITGROUP_TABLE');
-		def_WPC_bitgroup_table(undef,'Bitgroup Table');
+		$Address = def_WPC_ref('=BITGROUP_TABLE');
+		def_WPC_bitgroup_table(undef,'BITGROUP TABLE');
 	$Address = 0x81C5; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=SWITCHTABLE');
-		def_WPC_switchTable(undef,'Switch Table',1);				# label already defined, follow code
+		$Address = def_WPC_ref('=SWITCH_TABLE');
+		def_WPC_switchTable(undef,'SWITCH TABLE',1);				# label already defined, follow code
 	$Address = 0x81CE; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=FX_TABLE');
-		def_WPC_FXtable(undef,'FX Table');
+		$Address = def_WPC_ref('=LAMPFX_TABLE');
+		def_WPC_lampFXtable(undef,'LAMP EFFECTS TABLE');
 	$Address = 0x81D1; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=UNKNOWN_SYSTEM_TABLE_%04X',$Address));
-		def_WPC_unknownSystem_table_1(undef,'Unknown System Table');
+		$Address = def_WPC_ref('=DISPLAYFX_TABLE');
+		def_WPC_displayFXtable(undef,'DISPLAY EFFECTS TABLE');
+	$Address = 0x81D4; push(@skipAddr,$Address);
+		$Address = def_WPC_ref('=CHECKSUMBLOCK_TABLE_1');
+		def_WPC_checksumBlocks_table(undef,'CHECKSUM-BLOCK TABLE');
+	$Address = 0x81D7; push(@skipAddr,$Address);
+		$Address = def_WPC_ref('=CHECKSUMBLOCK_TABLE_2');
+		def_WPC_checksumBlocks_table(undef,'CHECKSUM-BLOCK TABLE');
 	$Address = 0x81EC; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=UNKNOWN_SYSTEM_TABLE_%04X',$Address));
-		def_WPC_unknownSystem_table(undef,'Unknown System Table');
+		$Address = def_WPC_ref('=SYSTEM_ADJUSTMENTS_TABLE');
+		def_WPC_adjustment_table('=SYSTEM_ADJUSTMENTS_TABLE','SYSTEM ADJUSTMENTS TABLE');
 	$Address = 0x81EF; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=UNKNOWN_SYSTEM_TABLE_%04X',$Address));
-		def_WPC_unknownSystem_table(undef,'FX Table');
+		$Address = def_WPC_ref('=GAME_ADJUSTMENTS_TABLE');
+		def_WPC_adjustment_table('=GAME_ADJUSTMENTS_TABLE','GAME ADJUSTMENTS TABLE');
 	$Address = 0x8216; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('SOLCMD_LIST_1');
+		$Address = def_WPC_ref('SOLCMD_LIST_1');
 		def_wordlist_hex(0x0000,undef);
 	$Address = 0x8219; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('SOLCMD_LIST_2');
+		$Address = def_WPC_ref('SOLCMD_LIST_2');
 		def_wordlist_hex(0x0000,undef);
 	$Address = 0x821C; push(@skipAddr,$Address);
-	$Address = def_WPC_ref('=AUX_SWITCHTABLE');
+		$Address = def_WPC_ref('=AUX_SWITCHTABLE');
 		def_WPC_switchTable(undef,'Switch Table',1)
 	        if defined($Address);
 	$Address = 0x821F; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=UNKNOWN_BYTE_TABLE_%04X',$Address));
+		$Address = def_WPC_ref(sprintf('=UNKNOWN_BYTE_TABLE_%04X',$Address));
 		def_byteblock_hex(64,undef,'Byte Table');
 
 	$Address = 0x8222; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_GAMESTRINGS_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_GAMESTRINGS');
+		def_WPC_stringTable('ENGLISH_GAMESTRING','Game String Table','Gamestring#');
 	$Address = 0x8225; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_GAMESTRINGS_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_GAMESTRINGS');
+		def_WPC_stringTable('GERMAN_GAMESTRING','Game String Table','Gamestring#');
 	$Address = 0x8228; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_GAMESTRINGS_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_GAMESTRINGS');
+		def_WPC_stringTable('FRENCH_GAMESTRING','Game String Table','Gamestring#');
 	$Address = 0x822B; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_SOLENOIDNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_SOLENOIDNAMES');
+		def_WPC_stringTable('ENGLISH_SOLENOIDNAME','System String Table','SolenoidName#');
 	$Address = 0x822E; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_SOLENOIDNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_SOLENOIDNAMES');
+		def_WPC_stringTable('GERMAN_SOLENOIDNAME','System String Table','SolenoidName#');
 	$Address = 0x8231; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_SOLENOIDNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_SOLENOIDNAMES');
+		def_WPC_stringTable('FRENCH_SOLENOIDNAME','System String Table','SolenoidName#');
 	$Address = 0x8234; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_FLASHERNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_FLASHERNAMES');
+		def_WPC_stringTable('ENGLISH_FLASHERNAME','System String Table','FlasherName#');
 	$Address = 0x8237; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_FLASHERNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_FLASHERNAMES');
+		def_WPC_stringTable('GERMAN_FLASHERNAME','System String Table','FlasherName#');
 	$Address = 0x823A; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_FLASHERNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_FLASHERNAMES');
+		def_WPC_stringTable('FRENCH_FLASHERNAME','System String Table','FlasherName#');
 	$Address = 0x823D; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_SWITCHNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_SWITCHNAMES');
+		def_WPC_stringTable('ENGLISH_SWITCHNAME','System String Table','SwitchName#');
 	$Address = 0x8240; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_SWITCHNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_SWITCHNAMES');
+		def_WPC_stringTable('GERMAN_SWITCHNAME','System String Table','SwitchName#');
 	$Address = 0x8243; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_SWITCHNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_SWITCHNAMES');
+		def_WPC_stringTable('FRENCH_SWITCHNAME','System String Table','SwitchName#');
 	$Address = 0x8246; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_LAMPNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_LAMPNAMES');
+		def_WPC_stringTable('ENGLISH_LAMPNAME','System String Table','LampName#');
 	$Address = 0x8249; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_LAMPNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_LAMPNAMES');
+		def_WPC_stringTable('GERMAN_LAMPNAME','System String Table','LampName#');
 	$Address = 0x824C; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_LAMPNAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_LAMPNAMES');
+		def_WPC_stringTable('FRENCH_LAMPNAME','System String Table','LampName#');
 	$Address = 0x824F; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_GAMEAUDIT_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_GAMEAUDIT_NAMES');
+		def_WPC_stringTable('ENGLISH_GAMEAUDIT_NAME','System String Table','GameAuditName#');
 	$Address = 0x8252; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_GAMEAUDIT_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_GAMEAUDIT_NAMES');
+		def_WPC_stringTable('GERMAN_GAMEAUDIT_NAME','System String Table','GameAuditName#');
 	$Address = 0x8255; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_GAMEAUDIT_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_GAMEAUDIT_NAMES');
+		def_WPC_stringTable('FRENCH_GAMEAUDIT_NAME','System String Table','GameAuditName#');
 	$Address = 0x8258; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_SYSAUDIT_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_SYSAUDIT_NAMES');
+		def_WPC_stringTable('ENGLISH_SYSAUDIT_NAME','System String Table','SysAuditName#');
 	$Address = 0x825B; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_SYSAUDIT_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_SYSAUDIT_NAMES');
+		def_WPC_stringTable('GERMAN_SYSAUDIT_NAME','System String Table','SysAuditName#');
 	$Address = 0x825E; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_SYSAUDIT_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_SYSAUDIT_NAMES');
+		def_WPC_stringTable('FRENCH_SYSAUDIT_NAME','System String Table','SysAuditName#');
 	$Address = 0x8261; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_GAMESETTINGS_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_GAME_ADJUSTMENTS_NAMES');
+		def_WPC_stringTable('ENGLISH_GAMEADJ_NAME','System String Table','GameAdjustmentName#');
 	$Address = 0x8264; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_GAMESETTINGS_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_GAME_ADJUSTMENTS_NAMES');
+		def_WPC_stringTable('GERMAN_GAMEADJ_NAME','System String Table','GameAdjustmentName#');
 	$Address = 0x8267; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_GAMESETTINGS_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_GAME_ADJUSTMENTS_NAMES');
+		def_WPC_stringTable('FRENCH_GAMEADJ_NAME','System String Table','GameAdjustmentName#');
 	$Address = 0x826A; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_SYSSETTINGS_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_SYSTEM_ADJUSTMENTS_NAMES');
+		def_WPC_stringTable('ENGLISH_SYSADJ_NAME','System String Table','SysAdjustmentName#');
 	$Address = 0x826D; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_SYSSETTINGS_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_SYSTEM_ADJUSTMENTS_NAMES');
+		def_WPC_stringTable('GERMAN_SYSADJ_NAME','System String Table','SysAdjustmentName#');
 	$Address = 0x8270; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_SYSSETTINGS_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_SYSTEM_ADJUSTMENTS_NAMES');
+		def_WPC_stringTable('FRENCH_SYSADJ_NAME','System String Table','SysAdjustmentName#');
 	$Address = 0x8273; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_GI_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_GI_NAMES');
+		def_WPC_stringTable('ENGLISH_GI_NAME','System String Table','GIName#');
 	$Address = 0x8276; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_GI_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_GI_NAMES');
+		def_WPC_stringTable('GERMAB_GI_NAME','System String Table','GIName#');
 	$Address = 0x8279; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_GI_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_GI_NAMES');
+		def_WPC_stringTable('FRENCH_GI_NAME','System String Table','GIName#');
 	$Address = 0x827C; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=ENGLISH_TUNE_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=ENGLISH_TUNE_NAMES');
+		def_WPC_stringTable('ENGLISH_TUNE_NAME','System String Table','BackgroundTuneName#');
 	$Address = 0x827F; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=GERMAN_TUNE_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=GERMAN_TUNE_NAMES');
+		def_WPC_stringTable('GERMAN_TUNE_NAME','System String Table','BackgroundTuneName#');
 	$Address = 0x8282; push(@skipAddr,$Address);
-	$Address = def_WPC_ref(sprintf('=FRENCH_TUNE_NAMES_%04X',$Address));
-		def_WPC_stringTable(undef,'String Table');
+		$Address = def_WPC_ref('=FRENCH_TUNE_NAMES');
+		def_WPC_stringTable('FRENCH_TUNE_NAME','System String Table','BackgroundTuneName#');
 
 	my(@strRef)   = (0x8133,0x8136,0x8139);							# String References
-	my(@strRefL)  = ('GAME_NAME','GAME_NUMBER','RELEASE_DATE');
+	my(@strRefL)  = ('GAME_NAME','GAME_NUMBER','BUILD_DATE');
 
-	my(@known)	  = (0x8151,0x8193);
-	my(@knownL)	  = ('BALLSEARCH_TIMER','STARTBUTTON_LAMP');
+	my(@known)	  = (0x814E,0x812D,0x8151,0x8193);
+	my(@knownL)	  = ('SHOOTERLANE_SWITCH','SIZE_PLAYER_GAME_DATA','BALLSEARCH_TIMER','STARTBUTTON_LAMP');
 
 	my(@tblRef) = (0x81A8,0x81B9,0x81BC,0x81BF,0x81C8,0x81CB,
 				   0x81D4,0x81D7,0x81DA,0x81DD,0x81E0,0x81E3,0x81E6,
 				   0x81E9,0x81F2,0x81F5,0x81F8,0x81FB,
 				   0x81FE,0x8201,0x8204,0x8207,0x820A,0x820D,0x8210,
 				   0x8213);
-	my(@tblLbl) = (0x81A8,0x81B9,0x81BC,0x81BF,0x81C8,0x81CB,
-				   0x81D4,0x81D7,'=SCORE_TABLE',0x81DD,0x81E0,0x81E3,0x81E6,
-				   0x81E9,0x81F2,0x81F5,0x81F8,0x81FB,
+	my(@tblLbl) = (0x81A8,'=LAMP_INIT_MEM','=BLINK_INIT_MEM','=FLAGS_INIT_MEM',
+				   0x81C8,0x81CB,0x81D4,0x81D7,'=SCORE_TABLE',0x81DD,
+				   0x81E0,0x81E3,0x81E6,0x81E9,0x81F2,0x81F5,0x81F8,0x81FB,
 				   0x81FE,0x8201,0x8204,0x8207,0x820A,0x820D,0x8210,
 				   0x8213);				   
 
@@ -702,7 +833,7 @@ sub disassemble_system_pointers()
 	    def_ptr_hex_alt(sprintf('^UNKNOWN_SYSTEM_PARAM_%04X',$Address),sprintf('UNKNOWN_SYSTEM_PARAM_%04X',$Address));
 	}
 
-	def_ptr_hex('^=STATUS_AREA');
+	def_ptr_hex('^HEAP_START');
 	insert_divider($Address,'System Code');
 
 	$Address = 0xFFEC;													# checksum
@@ -711,6 +842,13 @@ sub disassemble_system_pointers()
 	$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1; 
 }
 
+#======================================================================
+# WPC Tables
+#======================================================================
+
+#----------------------------------------------------------------------
+# Lock Table
+#----------------------------------------------------------------------
 
 sub disassemble_lock_table()
 {
@@ -732,6 +870,10 @@ sub disassemble_lock_table()
 	def_WPC_lockTable('=LOCKTABLE','Multiball Device Table',1);
 }
 
+#----------------------------------------------------------------------
+# Font Table
+#----------------------------------------------------------------------
+
 sub disassemble_font_table()
 {
 	$Address = 0x8285;
@@ -744,13 +886,18 @@ sub disassemble_font_table()
 	def_WPC_fontAncilTable('=FONTS_ANCIL','Font Ancillary Table');
 }
 
-sub disassemble_DMD_table()
+#----------------------------------------------------------------------
+# DMD Data Table
+#----------------------------------------------------------------------
+
+sub disassemble_DMD_frame_table($)
 {
+	($opt_D) = @_;
 	$Address = 0x8288;
 	my($pg) = BYTE($Address+2);
-	$Address = def_WPC_ref('=DMD_ANIMATIONS',undef,1);
+	$Address = def_WPC_ref('=DMD_ANIMATION_FRAMES',undef,1);
 	my($opg) = select_WPC_RPG($pg);
-	def_WPC_DMDtable('=DMD_ANIMATIONS','DMD Table');
+	def_WPC_DMDframes('=DMD_ANIMATION_FRAMES','DMD Animation Frame Table');
 	select_WPC_RPG($opg);
 }
 
@@ -759,7 +906,10 @@ sub disassemble_DMD_table()
 #	- replace JMP *+3 by &skip postfix tag of preceding JSR instruction
 #	- make sleep arguments decimal
 #	- add empty lines after RTS, JMP, etc.
-#	- handle WPC truth values (CC=true) after predicates marked with ?
+#	- handle WPC truth values (CC=true) after predicates marked with
+#	  trailing '?'
+#	- define operands in comments
+#	- define APPLE_VERSION
 #======================================================================
 
 sub apply_magic_WPC($$)
@@ -774,6 +924,57 @@ sub apply_magic_WPC($$)
 	}
 
 	for (my($addr)=$fa; $addr<=$la-1; $addr++) {
+		next unless defined($OP[$addr]);
+
+		for (my($i)=1; $i<=@{$OPA[$addr]}; $i++) {								
+			my($opa) = ($REM[$addr] =~ m{\b$i:(\S+)});
+			next unless defined($opa);
+
+##          print(STDERR "OPA[$addr][$i-1] = $opa =>");
+			if ($opa =~ m{%d}) {												# decimalize (e.g. 1:#%d)
+				my($pre,$post) = ($`,$');
+				my($num) = ($OPA[$addr][$i-1] =~ m{^$pre(.*)$post$});
+				die unless defined($num);
+				$num = hex($') if ($num =~ m{^\$});
+				$OPA[$addr][$i-1] = sprintf("$pre%d$post",$num);
+			} elsif ($opa ne 'nolabel') {										# nolabel handled in D711.pm
+				if ($opa =~ m{Lamp#$}) {										# e.g. 1:#Lamp#
+					my($pre) = $`;
+					my($num) = ($OPA[$addr][$i-1] =~ m{^$pre\$([0-9A-F]{2})$});
+					die unless defined($num);
+					$opa = sprintf("${pre}Lamp#%d",hex($num));
+                } elsif ($opa =~ m{Gamestring#$}) {								# e.g. 1:#Gamestring#
+					my($pre) = $`;
+					my($num) = ($OPA[$addr][$i-1] =~ m{^$pre\$([0-9A-F]{4})$});
+					die unless defined($num);
+					$opa = sprintf("${pre}Gamestring#%d",hex($num));
+				} elsif ($opa =~ m{DisplayFX#$}) {								# e.g. 1:#DisplayFX#
+					my($pre) = $`;
+					my($num) = ($OPA[$addr][$i-1] =~ m{^$pre\$([0-9A-F]{2})$});
+					die unless defined($num);
+					$opa = "${pre}DisplayFX#$num";
+				} elsif ($opa =~ m{StringSpec#$}) {								# e.g. 1:#StringSpec#
+					my($pre) = $`;
+					my($num) = ($OPA[$addr][$i-1] =~ m{^$pre\$([0-9A-F]{4})$});
+					die(sprintf("addr=%X, opa=$opa, pre=$pre, OPA=$OPA[$addr][$i-1] OP=$OP[$addr]",$addr)) unless defined($num);
+					$opa = "${pre}StringSpec#$num";
+				} elsif ($opa =~ m{Thread#$}) {									# e.g. 1:#Thread#
+					my($pre) = $`;
+					my($num) = ($OPA[$addr][$i-1] =~ m{^$pre\$([0-9A-F]{4})$});
+					die(sprintf("addr=%X, opa=$opa, pre=$pre, OPA=$OPA[$addr][$i-1] OP=$OP[$addr]",$addr)) unless defined($num);
+					$opa = "${pre}Thread#$num";
+				} elsif ($opa =~ m{Error#$}) {									# e.g. 1:#Error#
+					my($pre) = $`;
+					my($num) = ($OPA[$addr][$i-1] =~ m{^$pre\$([0-9A-F]{2})$});
+					die(sprintf("addr=%X, opa=$opa, pre=$pre, OPA=$OPA[$addr][$i-1] OP=$OP[$addr]",$addr)) unless defined($num);
+					$opa = "${pre}Error#$num";
+				}
+	            $OPA[$addr][$i-1] = $opa;										# otherwise use it literally
+	        }						
+            substitute_identifier(\$OPA[$addr][$i-1]);							# substitute system identifiers after mangling argument
+##          print(STDERR "$OPA[$addr][$i-1]\n");
+        }
+		
 		if ($OP[$addr] eq 'JMP' && $LBL[$addr+3] =~ m{^([0-9A-F]{2}:)?$OPA[$addr][0]$}) {	# 1) JMP *+3
 			undef($OP[$addr]);													# generate postfix tag
 			push(@{$OPA[$addr-3]},'& _SKIP');
@@ -788,7 +989,7 @@ sub apply_magic_WPC($$)
 		} elsif ($IND[$addr] == $code_base_indent &&							# 3) add extra space after top-level "exit" instructions
 				 (isMember($OP[$addr],'RTS','LBRA','JMP') ||
 				  ($OP[$addr] eq '!' && $OPA[$addr][0] eq 'exitThread') ||
-				  $REM[$addr] eq 'RTS')) {
+				  $REM[$addr] =~ m{^RTS$})) {
 			insert_empty_line($addr);
 		} elsif ($OPA[$addr][0] =~ m{[^\?]\?$}) {								# 4) _IF_true / _IF_false
 			my($noa) = $addr + 1;												#	 	execute when last arg ends with a ? but not with ??
@@ -797,16 +998,26 @@ sub apply_magic_WPC($$)
 				$noa++;
 				die if $noa > 0xFFFF;
 			}
-			if    ($OP[$noa] eq '_IF_CC') { $OP[$noa] = '_IF_true'; }			# _IF_true
-			elsif ($OP[$noa] eq '__IF_CC') { $OP[$noa] = '__IF_true'; }			# __IF_true
-			elsif ($OP[$noa] eq '_IF_CS') { $OP[$noa] = '_IF_false'; }			# _IF_false
-			elsif ($OP[$noa] eq '__IF_CS') { $OP[$noa] = '__IF_false'; }		# __IF_false
-			elsif ($OP[$noa] eq 'BCC') { $OP[$noa] = 'Btrue'; }					# Btrue
-			elsif ($OP[$noa] eq 'BCS') { $OP[$noa] = 'Bfalse'; }				# Bfalse
-			elsif ($OP[$noa] eq 'LBCC') { $OP[$noa] = 'LBtrue'; }				# LBtrue
-			elsif ($OP[$noa] eq 'LBCS') { $OP[$noa] = 'LBfalse'; }				# LBfalse
+			if    ($OP[$noa] eq '_IF_CC') 		{ $OP[$noa] = '_IF_true'; }		#  boolean values: IF
+			elsif ($OP[$noa] eq '__IF_CC') 		{ $OP[$noa] = '__IF_true'; }		
+			elsif ($OP[$noa] eq '_IF_CS') 		{ $OP[$noa] = '_IF_false'; }		
+			elsif ($OP[$noa] eq '__IF_CS') 		{ $OP[$noa] = '__IF_false'; }		
+			elsif ($OP[$noa] eq 'BCC') 			{ $OP[$noa] = 'Btrue'; }		# branches
+			elsif ($OP[$noa] eq 'BCS') 			{ $OP[$noa] = 'Bfalse'; }			
+			elsif ($OP[$noa] eq 'LBCC') 		{ $OP[$noa] = 'LBtrue'; }			
+			elsif ($OP[$noa] eq 'LBCS') 		{ $OP[$noa] = 'LBfalse'; }			
+			elsif ($OP[$noa] eq '_WHILE_CC') 	{ $OP[$noa] = '_WHILE_true'; }		
+			elsif ($OP[$noa] eq '_WHILE_CS') 	{ $OP[$noa] = '_WHILE_false'; }		
 		}
+
+		insert_empty_line($addr) if $REM[$addr] =~ m{^\\n$};					# extra space requested
+
 	}
+
+	$Address = $Lbl{'RST_handler'};												# APPLE_VERSION
+	die($Address) unless numberp($Address);
+	$LBL[$Address-2] = 'APPLE_VERSION';
+
 }
 
 #----------------------------------------------------------------------
@@ -827,7 +1038,7 @@ sub init_WPC(@)
 }
 
 #======================================================================
-# WPC Disassembly Library
+# WPC Disassembly Library (Utilities)
 #======================================================================
 
 #----------------------------------------------------------------------
@@ -1038,13 +1249,13 @@ sub def_WPC_byteList_table($@)
 }
 
 #----------------------------------------------------------------------
-# Unknown System Tables with code refs
+# Game Adjustment Tables
 #----------------------------------------------------------------------
 
-sub def_WPC_unknownSystem_table($@)
+sub def_WPC_adjustment_table($@)
 {
 	my($lbl,$divider_label) = @_;
-##	printf(STDERR "def_WPC_unknownSystem_table(@_) @%02X:%04X\n",$_cur_RPG,$Address);
+##	printf(STDERR "def_WPC_adjustment_table(@_) @%02X:%04X\n",$_cur_RPG,$Address);
 
 	die unless defined($Address);
 	return if ($decoded[$Address]);												
@@ -1053,7 +1264,7 @@ sub def_WPC_unknownSystem_table($@)
 	if (defined($lbl)) {
 		$lbl = $` if ($lbl =~ m{\[[0-9A-F]{2}\]$}); 								
 	    setLabel($lbl,$Address);
-	}
+	} else { die; }
     
 	insert_divider($Address,$divider_label);
 
@@ -1062,29 +1273,28 @@ sub def_WPC_unknownSystem_table($@)
 	my($rows,$cols) = (WORD($Address),BYTE($Address+2));
 	push(@{$OPA[$Address]},$rows);
 	push(@{$OPA[$Address]},$cols);
-	$REM[$Address] = 'number of table rows, bytes per row' unless defined($REM[$Address]);
+	$REM[$Address] = 'number of adjustments, 12 bytes per adjustment' unless defined($REM[$Address]);
 	$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
 	my($TSA) = $Address;												# Table Start Address
 	die unless $cols == 12;
 
-	my($lbase) = defined($lbl) ? $lbl : $LBL[$TSA-3];
-	$lbase = $' if ($lbase =~ m{^[0-9A-Fa-f]{2}:});
+##	my($lbase) = defined($lbl) ? $lbl : $LBL[$TSA-3];
+##	$lbase = $' if ($lbase =~ m{^[0-9A-Fa-f]{2}:});
 	for (my($r)=0; $r<$rows; $r++) {
 		my($opaddr) = $Address;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
-		$REM[$opaddr] = sprintf('Row#%d',$r) if $r%10==0;
+		$REM[$opaddr] = sprintf('Adjustment#%d',$r);
 		$OP[$opaddr] = '.DB';
 		for (my($i)=0; $i<6; $i++) {
 			push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address)));
 			$decoded[$Address++] = 1;
 		}
-		if (VALID_ROMREF()) {
+		if (VALID_ROMREF()) {											# adjustment data
 			my($opaddr) = $Address;
 			$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
 	        $OP[$opaddr] = '.DR';
-#			push(@{$OPA[$opaddr]},sprintf('$%04X',WORD($Address)));
-			push(@{$OPA[$opaddr]},label_address(WORD($Address),sprintf('%s_%d_1',$lbase,$r)));
+			push(@{$OPA[$opaddr]},label_address(WORD($Address),sprintf("${lbl}#%d_data",$r)));
 			push(@{$OPA[$opaddr]},sprintf('$%02X',BYTE($Address+2)));
 			$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
@@ -1094,8 +1304,7 @@ sub def_WPC_unknownSystem_table($@)
 			if ($Address < 0x8000) {
 				select_WPC_RPG(BYTE($TSA+12*$r+8));
 			}
-##			printf(STDERR "@%02X:%04X: def_word_hex('%s_%d_1')\n",$_cur_RPG,$Address,$lbase,$r);
-			def_word_hex(sprintf('%s_%d_1',$lbase,$r));
+			def_word_hex(sprintf("${lbl}#%d_data",$r));
 			select_WPC_RPG($sP);
 	        $Address = $sA;
 
@@ -1109,8 +1318,7 @@ sub def_WPC_unknownSystem_table($@)
 		my($opaddr) = $Address;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
         $OP[$opaddr] = '.DR';
-#		push(@{$OPA[$opaddr]},sprintf('$%04X',WORD($Address)));
-		push(@{$OPA[$opaddr]},label_address(WORD($Address),sprintf('%s_%d_2',$lbase,$r)));
+		push(@{$OPA[$opaddr]},label_address(WORD($Address),sprintf('Adjustment#%d_handler',$r)));
 		push(@{$OPA[$opaddr]},sprintf('$%02X',BYTE($Address+2)));
 		$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
@@ -1121,7 +1329,7 @@ sub def_WPC_unknownSystem_table($@)
 			select_WPC_RPG(BYTE($TSA+12*$r+11));
 		}
 ##		printf(STDERR "@%02X:%04X: def_code('%s_%d_2')\n",$_cur_RPG,$Address,$lbase,$r);
-		def_code(sprintf('%s_%d_2',$lbase,$r));
+		def_code(sprintf('Adjustment#%d_handler',$r));
 		select_WPC_RPG($sP);
 		$Address = $sA;
 	}
@@ -1130,10 +1338,10 @@ sub def_WPC_unknownSystem_table($@)
 ##	insert_empty_line($Address-2);
 }
 
-sub def_WPC_unknownSystem_table_1($@)
+sub def_WPC_displayFXtable($@)
 {
 	my($lbl,$divider_label) = @_;
-##	printf(STDERR "def_WPC_unknownSystem_table_1(@_) @%02X:%04X\n",$_cur_RPG,$Address);
+##	printf(STDERR "def_WPC_displayFXtable(@_) @%02X:%04X\n",$_cur_RPG,$Address);
 
 	die unless defined($Address);
 	return if ($decoded[$Address]);												
@@ -1157,42 +1365,37 @@ sub def_WPC_unknownSystem_table_1($@)
 	my($TSA) = $Address;												# Table Start Address
 	die unless $cols == 5;
 
-	my($lbase) = defined($lbl) ? $lbl : $LBL[$TSA-3];
-	$lbase = $' if ($lbase =~ m{^[0-9A-Fa-f]{2}:});
+#	my($lbase) = defined($lbl) ? $lbl : $LBL[$TSA-3];
+#	$lbase = $' if ($lbase =~ m{^[0-9A-Fa-f]{2}:});
 	for (my($r)=0; $r<$rows; $r++) {
 		my($opaddr) = $Address;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
-		$REM[$opaddr] = sprintf('Row#%d',$r) if $r%10==0;
+		$REM[$opaddr] = defined($DisplayFX[$r]) ? $DisplayFX[$r] : sprintf('DisplayFX#%02X',$r);
 		$OP[$opaddr] = '.DB';
 		for (my($i)=0; $i<2; $i++) {
 			push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address)));
 			$decoded[$Address++] = 1;
 		}
-		if (VALID_ROMREF()) {
-			my($opaddr) = $Address;
-			$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
-	        $OP[$opaddr] = '.DR';
-			push(@{$OPA[$opaddr]},label_address(WORD($Address),sprintf('%s_%d_1',$lbase,$r)));
-			push(@{$OPA[$opaddr]},sprintf('$%02X',BYTE($Address+2)));
-			$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+		die unless VALID_ROMREF();
+		
+		my($opaddr) = $Address;
+		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
+		$OP[$opaddr] = '.DR';
+		my($FXn) = defined($DisplayFX[$r]) ? $DisplayFX[$r] : sprintf('DisplayFX#%02X',$r);
+		push(@{$OPA[$opaddr]},label_address(WORD($Address),$FXn.'_handler'));
+		push(@{$OPA[$opaddr]},sprintf('$%02X',BYTE($Address+2)));
+		$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
-			my($sA) = $Address;
-			my($sP) = $_cur_RPG;
-			$Address = WORD($TSA+5*$r+2);
-			
-			select_WPC_RPG(BYTE($TSA+5*$r+4))
-				if ($Address < 0x8000);
-##			printf(STDERR "@%02X:%04X: def_word_hex('%s_%d_1')\n",$_cur_RPG,$Address,$lbase,$r);
-##			def_word_hex(sprintf('%s_%d_1',$lbase,$r));
-			def_code(sprintf('%s_%d_1',$lbase,$r));
-			select_WPC_RPG($sP);
-	        $Address = $sA;
-		} else {
-			for (my($i)=0; $i<3; $i++) {
-				push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address)));
-				$decoded[$Address++] = 1;
-	        }
-	    }
+		my($sA) = $Address;
+		my($sP) = $_cur_RPG;
+		$Address = WORD($TSA+5*$r+2);
+	    
+		select_WPC_RPG(BYTE($TSA+5*$r+4))
+			if ($Address < 0x8000);
+		def_code($FXn . '_handler');
+		select_WPC_RPG($sP);
+        $Address = $sA;
+
 		my($sA) = $Address;
 		my($sP) = $_cur_RPG;
 		$Address = WORD($TSA+5*$r+2);
@@ -1207,13 +1410,13 @@ sub def_WPC_unknownSystem_table_1($@)
 }
 
 #----------------------------------------------------------------------
-# String Table
+# Checksum Blocks
 #----------------------------------------------------------------------
 
-sub def_WPC_stringTable($@)
+sub def_WPC_checksumBlocks_table($@)
 {
 	my($lbl,$divider_label) = @_;
-#	print(STDERR "def_WPC_stringTable(@_)\n");
+##	printf(STDERR "def_WPC_checksumBlocks_table(@_) @%02X:%04X\n",$_cur_RPG,$Address);
 
 	die unless defined($Address);
 	return if ($decoded[$Address]);												
@@ -1235,6 +1438,52 @@ sub def_WPC_stringTable($@)
 	$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
 	my($TSA) = $Address;												# Table Start Address
+	die unless $cols == 5;
+
+	for (my($r)=0; $r<$rows; $r++) {
+		my($opaddr) = $Address;
+		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
+		$REM[$opaddr] = sprintf('RAM ptr, block length, memory page',$r) if $r == 0;
+		$OP[$opaddr] = '.DWWB';
+		push(@{$OPA[$opaddr]},sprintf('$%04X',WORD($Address)));
+		$decoded[$Address++] = $decoded[$Address++] = 1;
+		push(@{$OPA[$opaddr]},sprintf('$%04X!',WORD($Address)));
+		$decoded[$Address++] = $decoded[$Address++] = 1;
+		push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address)));
+		$decoded[$Address++] = 1;
+	}
+    return;
+}
+
+#----------------------------------------------------------------------
+# String Table
+#----------------------------------------------------------------------
+
+sub def_WPC_stringTable($$$)
+{
+	my($lbl,$divider_label,$sid) = @_;
+#	print(STDERR "def_WPC_stringTable(@_)\n");
+
+	die unless defined($Address);
+	return if ($decoded[$Address]);												
+	return if defined($OP[$Address]);
+
+##	if (defined($lbl)) {
+##		$lbl = $` if ($lbl =~ m{\[[0-9A-F]{2}\]$}); 								
+##	    setLabel($lbl,$Address);
+##	}
+    
+	insert_divider($Address,$divider_label);
+
+	$IND[$Address] = $code_base_indent; $TYPE[$Address] =  $CodeType_data;
+	$OP[$Address] = '.DWB';
+	my($rows,$cols) = (WORD($Address),BYTE($Address+2));
+	push(@{$OPA[$Address]},$rows);
+	push(@{$OPA[$Address]},$cols);
+	$REM[$Address] = 'number of 2-byte string pointers' unless defined($REM[$Address]);
+	$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+
+	my($TSA) = $Address;												# Table Start Address
 	die unless $cols == 2;
 
 	my($lbase) = defined($lbl) ? $lbl : $LBL[$TSA-3];
@@ -1242,7 +1491,7 @@ sub def_WPC_stringTable($@)
 	for (my($r)=0; $r<$rows; $r++) {
 		my($opaddr) = $Address;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
-		$REM[$opaddr] = sprintf('Row#%d',$r) if $r%10==0;
+		$REM[$opaddr] = sprintf($sid . '%d',$r) unless defined($REM[$opaddr]);
 		$OP[$opaddr] = '.DW';
 		push(@{$OPA[$opaddr]},sprintf('$%04X',WORD($Address)));
 		$decoded[$Address++] = $decoded[$Address++] = 1;
@@ -1281,10 +1530,9 @@ sub dasm_bitgroup_def($$$)
 		return ($opa,$a);
 	}
 		    
-	if (BYTE($a) == 0x81) { 												# ??? (single byte)
+	if (BYTE($a) == 0x81) { 												# Bitgroup (single byte)
 		push(@{$OPA[$opa]},'$81'); $decoded[$a++] = 1;
-		push(@{$OPA[$opa]},sprintf("Lamp#%d",BYTE($a))); $decoded[$a++] = 1;
-##		push(@{$OPA[$opa]},sprintf('$%02X!',BYTE($a))); $decoded[$a++] = 1;
+		push(@{$OPA[$opa]},sprintf("Bitgroup#%02X",BYTE($a))); $decoded[$a++] = 1;
 		die unless BYTE($a) == 0x81;
 		push(@{$OPA[$opa]},'$81'); $decoded[$a++] = 1;
 		return ($opa,$a);
@@ -1418,10 +1666,11 @@ sub def_WPC_lockTable(@)
 		push(@{$OPA[$Address]},sprintf('$%04X',$taddr=WORD($Address)));
 		push(@{$OPA[$Address]},sprintf('$%02X',$trpg=BYTE($Address+2)));
 	    $decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
-		if ($lck == 1) {
+		if ($lck == 1) {																	# ball trouugh
+			my($swta);
 		  	$IND[$Address] = $code_base_indent; $TYPE[$Address] =  $CodeType_data;
 			$OP[$Address] = '.DWB';
-			push(@{$OPA[$Address]},sprintf('$%04X',WORD($Address)));
+			push(@{$OPA[$Address]},sprintf('$%04X',$swta=WORD($Address)));
 			push(@{$OPA[$Address]},sprintf('$%02X!',BYTE($Address+2)));
 			push(@{$OPA[$Address]},sprintf('$%02X!',BYTE($Address+3)));
 			push(@{$OPA[$Address]},sprintf('$%02X!',BYTE($Address+4)));
@@ -1430,6 +1679,19 @@ sub def_WPC_lockTable(@)
 			$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 			$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 			$decoded[$Address++] = 1;
+
+			setLabel('=BALLTROUGH_SWITCH_TABLE',$swta);										# balltrough switch table
+##			$REM[$swta] = 'balltrough switches' unless defined($REM[$swta]);
+			my($i);
+			for ($i=0; BYTE($swta+$i)!=0; $i++) {
+				$OP[$swta+$i] = '.DB'; $IND[$swta+$i] = $data_indent; $TYPE[$swta+$i] =  $CodeType_data;
+				push(@{$OPA[$swta+$i]},sprintf('Switch#%02X',BYTE($swta+$i)));
+				$decoded[$swta+$i] = 1;
+			}
+			$OP[$swta+$i] = '.DB'; $IND[$swta+$i] = $data_indent; $TYPE[$swta+$i] = $CodeType_data;
+			push(@{$OPA[$swta+$i]},'$00!');
+			$decoded[$swta+$i] = 1;
+			insert_divider($swta,'Balltrough Switches');
 		} elsif ($lck > 1) {
 		  	$IND[$Address] = $code_base_indent; $TYPE[$Address] =  $CodeType_data;
 			$OP[$Address] = '.DB';
@@ -1543,13 +1805,13 @@ sub def_WPC_fontAncilTable(@)
 }
 
 #----------------------------------------------------------------------
-# DMD Table
+# DMD Data Table
 #----------------------------------------------------------------------
 
-sub def_WPC_DMDtable(@)
+sub def_WPC_DMDframes(@)
 {
 	my($lbl,$divider_label) = @_;
-##	print(STDERR "def_WPC_DMDtable(@_)\n");
+##	print(STDERR "def_WPC_DMDdata(@_)\n");
 
 	die unless defined($Address);
 	return if ($decoded[$Address]);												
@@ -1562,23 +1824,131 @@ sub def_WPC_DMDtable(@)
     
 	insert_divider($Address,$divider_label);
 
-	for (my($DMD)=0; WORD($Address)!=0xFFFF; $DMD++) {
+	for (my($DMDframe)=0; WORD($Address)!=0xFFFF; $DMDframe++) {
 		$IND[$Address] = $code_base_indent; $TYPE[$Address] =  $CodeType_data;
 		$OP[$Address] = '.DR';
 		my($daddr) = WORD($Address);
 		my($dpg) = BYTE($Address+2);
-			my($opg) = select_WPC_RPG($dpg);
-			my($dlbl) = $LBL[$daddr];
-			$dlbl = sprintf('%02X:DMD#%02X_data',BYTE($Address+2),$DMD) unless defined($dlbl);
-		    setLabel($dlbl,$daddr);
-		    select_WPC_RPG($opg);
+		my($opg) = select_WPC_RPG($dpg);
+		my($dlbl) = $LBL[$daddr];
+		$dlbl = sprintf('%02X:DMDframe#%d',BYTE($Address+2),$DMDframe) unless defined($dlbl);
+		def_WPC_DMD_frame($DMDframe,$dlbl,$daddr);
+	    select_WPC_RPG($opg);
 		push(@{$OPA[$Address]},sprintf('$%04X',$daddr));
 		push(@{$OPA[$Address]},sprintf('$%02X',BYTE($Address+2)));
-		$REM[$Address] = 'pointer to DMD animation data' if !defined($REM[$Address]) && $DMD==0;
+		$REM[$Address] = 'pointer to DND frame data' if !defined($REM[$Address]) && $DMDframe==0;
 	    $decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
     }
 
     insert_empty_line($Address-3);
+}
+
+sub def_WPC_DMD_frame($$$)
+{
+	my($fNo,$lbl,$addr) = @_;
+
+	setLabel($lbl,$addr);
+
+	my($opaddr) = $addr;
+	$OP[$opaddr] = '.DB'; $IND[$opaddr] = $data_indent; $TYPE[$opaddr] = $CodeType_data;
+
+	my($xc) = 16;
+	my($yc) = 32;
+	my($tag) = BYTE($addr); $decoded[$addr++] = 1;
+	push(@{$OPA[$opaddr]},sprintf('$%02X!',$tag));
+	my($col) = 1;
+
+    for (my($x)=0; $x<128; $x++) {
+		undef($DMDFRAME[$x]);
+    }
+
+	my($source_bytes) = 1;
+
+	for (my($x)=my($y)=0; $x<128;) {
+		if ($col >= 8) {
+			$opaddr = $addr;
+			$OP[$opaddr] = '.DB'; $IND[$opaddr] = $data_indent; $TYPE[$opaddr] = $CodeType_data;
+			$col = 0;
+        }
+		if (BYTE($addr) == $tag) {
+			$source_bytes += 3;
+			$decoded[$addr++] = 1;
+			push(@{$OPA[$opaddr]},sprintf('$%02X!',$tag));
+			$col++;
+			my($len) = BYTE($addr); $decoded[$addr++] = 1;
+			if ($col >= 8) {
+				$opaddr = $addr - 1;
+				$OP[$opaddr] = '.DB'; $IND[$opaddr] = $data_indent; $TYPE[$opaddr] = $CodeType_data;
+				$col = 0;
+	        }
+			push(@{$OPA[$opaddr]},sprintf('$%02X!',$len));
+			$col++;
+			my($val) = BYTE($addr); $decoded[$addr++] = 1;
+			if ($col >= 8) {
+				$opaddr = $addr - 1;
+				$OP[$opaddr] = '.DB'; $IND[$opaddr] = $data_indent; $TYPE[$opaddr] = $CodeType_data;
+				$col = 0;
+	        } 
+			push(@{$OPA[$opaddr]},sprintf('$%02X!',$val));
+			$col++;
+			for (my($i)=0; $i<$len; $i++) {
+				renderByte(\$x,\$y,$val);
+			}
+		} else {
+			$source_bytes++;
+			$val = BYTE($addr); $decoded[$addr++] = 1;
+			push(@{$OPA[$opaddr]},sprintf('$%02X!',$val));
+			$col++;
+			renderByte(\$x,\$y,$val);
+        }
+    }
+
+	if ($opt_D) {
+		printf("DMDframe#%d: (compression factor %.1f)\n ",$fNo,512/$source_bytes);
+		for (my($x)=0; $x<128; $x++) {
+			print('v');
+		}
+		print("\n");
+		for (my($y)=0; $y<32; $y++) {
+			print('>');
+			for (my($x)=0; $x<128; $x++) {
+				print($DMDFRAME[$x][$y] ? '#' : ' ');
+			}
+			print("<\n");
+		}
+		print(' ');
+		for (my($x)=0; $x<128; $x++) {
+			print('^');
+		}
+	    print("\n\n");
+	}
+}
+
+sub renderByte($$$)
+{
+	my($x,$y,$val) = @_;
+
+	die("x,y = $$x,$$y") if ($$x >= 128);
+	die("x,y = $$x,$$y") if ($$y >= 32);
+
+	if ($val > 0) {
+		$DMDFRAME[$$x+0][$$y] = ($val & 0x01) ? 1 : 0;
+		$DMDFRAME[$$x+1][$$y] = ($val & 0x02) ? 1 : 0;
+		$DMDFRAME[$$x+2][$$y] = ($val & 0x04) ? 1 : 0;
+		$DMDFRAME[$$x+3][$$y] = ($val & 0x08) ? 1 : 0;
+		$DMDFRAME[$$x+4][$$y] = ($val & 0x10) ? 1 : 0;
+		$DMDFRAME[$$x+5][$$y] = ($val & 0x20) ? 1 : 0;
+		$DMDFRAME[$$x+6][$$y] = ($val & 0x40) ? 1 : 0;
+	    $DMDFRAME[$$x+7][$$y] = ($val & 0x80) ? 1 : 0;
+	}
+
+    if ($$y < 31) {
+    	$$y++;
+    } else {
+    	$$x += 8;
+    	$$y = 0;
+    }
+    
 }
 
 #----------------------------------------------------------------------
@@ -1642,13 +2012,13 @@ sub def_WPC_switchTable(@)
 }   
 		    
 #----------------------------------------------------------------------
-# FX Table
+# LampFX Table
 #----------------------------------------------------------------------
 
-sub def_WPC_FXtable(@)
+sub def_WPC_lampFXtable(@)
 {
 	my($lbl,$divider_label,$follow_code) = @_;
-#	print(STDERR "def_WPC_FXTable(@_)\n");
+#	print(STDERR "def_WPC_lampFXTable(@_)\n");
 
 	die unless defined($Address);
 	return if ($decoded[$Address]);												
@@ -1668,29 +2038,32 @@ sub def_WPC_FXtable(@)
 	push(@{$OPA[$Address]},$cols);
 	$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
-	for (my($FX)=1; $FX<=$rows; $FX++) {
+	for (my($LampFX)=0; $LampFX<$rows; $LampFX++) {
 		my($opaddr) = $Address;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
-		$REM[$opaddr] = defined($FX[$FX]) ? $FX[$FX] : sprintf('FX#%02X',$FX);
+		$REM[$opaddr] = defined($LampFX[$LampFX]) ? $LampFX[$LampFX] : sprintf('LampFX#%02X',$LampFX);
 		$OP[$opaddr] = '.DB';
 		for (my($i)=0; $i<7; $i++) {
-			push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address))); $decoded[$Address++] = 1;
+			push(@{$OPA[$opaddr]},($i == 3) ? sprintf('Bitgroup#%02X',BYTE($Address))
+											: sprintf('$%02X!',BYTE($Address)));
+			$decoded[$Address++] = 1;
 	    }
 
 		$opaddr += 7;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
 		$OP[$opaddr] = '.DR';
 		my($ta,$tp) = (WORD($Address),BYTE($Address+2));
-		my($FXn) = defined($FX[$FX]) ? $FX[$FX] : sprintf('FX#%02X',$FX);
-		push(@{$OPA[$opaddr]},label_address($ta,$FXn.'_handler',1));						# suppress address suffix in label
+		my($LampFXn) = defined($LampFX[$LampFX]) ? $LampFX[$LampFX] : sprintf('LampFX#%02X',$LampFX);
+		push(@{$OPA[$opaddr]},label_address($ta,$LampFXn.'_handler',1));						# suppress address suffix in label
 		push(@{$OPA[$opaddr]},sprintf('$%02X',$tp));
-		WPC_codeRef($FXn.'_handler',"FX Handler ($FXn)",$follow_code);
+		WPC_codeRef($LampFXn.'_handler',"FX Handler ($LampFXn)",$follow_code);
 		$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
 
 		$opaddr += 3;
 		$IND[$opaddr] = $code_base_indent; $TYPE[$opaddr] =  $CodeType_data;
 		$OP[$opaddr] = '.DB';
-		push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address))); $decoded[$Address++] = 1;
+##		push(@{$OPA[$opaddr]},sprintf('$%02X!',BYTE($Address))); $decoded[$Address++] = 1;
+		push(@{$OPA[$opaddr]},sprintf('DisplayFX#%02X',BYTE($Address))); $decoded[$Address++] = 1;
 	}
     insert_empty_line($Address);
 }   
@@ -1846,8 +2219,12 @@ sub def_WPC_string(@)
 		$OPA[$Address][0] .= decode_WPC_STR_char($Address+$o);
 		$decoded[$Address+$o] = 1;
 	}
-	$decoded[$Address+$o] = 1;
 	$OPA[$Address][0] .= "'";
+
+	unless ($maxlen < 1e99) {	 												# include NUL
+		$decoded[$Address+$o] = 1;
+		$o++;
+	}
 	$Address += $o;
 }   
 		    
@@ -1970,7 +2347,7 @@ sub defSwitch($$)
 {
 	my($no,$name) = @_;
 
-	die("defSwitch: invalid switch number $no\n")
+	die("defSwitch: invalid switch number <$no>\n")
 		unless ($no>=1 && $no<=64);
 	$Switch[$no] = $name;
 }
@@ -1979,7 +2356,7 @@ sub defLamp($$)
 {
 	my($no,$name) = @_;
 
-	die("defLamp: invalid lamp number $no\n")
+	die("defLamp: invalid lamp number <$no>\n")
 		unless ($no>0 && $no<=64);
 	$Lamp[$no] = $name;
 }
@@ -1988,8 +2365,8 @@ sub defGroup($$)
 {
 	my($no,$name) = @_;
 
-	die("defGroup: invalid group number $no\n")
-		unless ($no>0 && $no<=255);
+	die("defGroup: invalid group number <$no>\n")
+		unless ($no>=0 && $no<=255);
 	$BitGroup[$no] = $name;
 }
 
@@ -1997,7 +2374,7 @@ sub defFlag($$)
 {
 	my($no,$name) = @_;
 
-	die("defFlag: invalid flag number $no\n")
+	die("defFlag: invalid flag number <$no>\n")
 		unless ($no>0 && $no<=0x80);
 	$Flag[$no] = $name;
 }
@@ -2007,7 +2384,7 @@ sub defSolenoid($$)
 {
 	my($no,$name) = @_;
 
-	die("defSolenoid: invalid solenoid number $no\n")
+	die("defSolenoid: invalid solenoid number <$no>\n")
 		unless ($no>0 && $no<=0x65);
 	my($no,$name) = @_;
 	$Sol[$no] = $name;
@@ -2018,10 +2395,10 @@ sub defSolCmd($$)
 {
 	my($no,$name) = @_;
 
-	die("defSolCmd: invalid solenoid command number $no\n")
+	die("defSolCmd: invalid solenoid command number <$no>\n")
 		unless ($no>=0 && $no<=0xFF);
 	my($no,$name) = @_;
-	$Sol[$no] = $name;
+	$SolCmd[$no] = $name;
 }
 
 sub defLabel($$$)
@@ -2036,7 +2413,7 @@ sub defAdjustment($$)
 {
 	my($no,$name) = @_;
 
-	die("defAdjustment: invalid adjustment number $no\n")
+	die("defAdjustment: invalid adjustment number <$no>\n")
 		unless ($no>0 && $no<=0xFFFF);
 	$Adj[$no] = $name;
 }
@@ -2045,7 +2422,7 @@ sub defAudit($$)
 {
 	my($no,$name) = @_;
 
-	die("defAudit: invalid audit number $no\n")
+	die("defAudit: invalid audit number <$no>\n")
 		unless ($no>=0 && $no<65);
 	$Audit[$no] = $name;
 }
@@ -2054,27 +2431,36 @@ sub defThread($$)
 {
 	my($no,$name) = @_;
 
-	die("defThread: invalid thread id\n")
-		unless ($no>0 && $no<=0xFFFF);
+	die("defThread: invalid thread id <$no>\n")
+		unless ($no>=0 && $no<=0xFFFF);
 	$Thread[$no] = $name;
 }
 
-sub defDMD($$)
+sub defDisplayFX($$)
 {
 	my($no,$name) = @_;
 
-	die("defDMD: invalid DMD animation\n")
-		unless ($no>0 && $no<=0xFFFF);
-	$DMD[$no] = $name;
+	die("defDisplayFX: invalid DisplayFX number <$no>\n")
+		unless ($no>=0 && $no<=0xFFFF);
+	$DisplayFX[$no] = $name;
 }
 
-sub defFX($$)
+sub defLampFX($$)
 {
 	my($no,$name) = @_;
 
-	die("defFX: invalid FX number\n")
-		unless ($no>0 && $no<=0xFFFF);
-	$FX[$no] = $name;
+	die("defLampFX: invalid LampFX number <$no>\n")
+		unless ($no>=0 && $no<=0xFF);
+	$LampFX[$no] = $name;
+}
+
+sub defSound($$)
+{
+	my($no,$name) = @_;
+
+	die("defSound: invalid Sound number <$no>\n")
+		unless ($no>=0 && $no<=0xFF);
+	$Sound[$no] = $name;
 }
 
 #----------------------------------------------------------------------

@@ -2,9 +2,9 @@
 #======================================================================
 #                    C 7 1 1 
 #					 doc: Sat Jan  4 13:07:44 2020
-#                    dlm: Mon Jul 14 14:58:00 2025
+#                    dlm: Wed Feb 18 16:38:17 2026
 #                    (c) 2020 idealjoker@mailbox.org
-#                    uE-Info: 402 46 NIL 0 0 72 10 2 4 NIL ofnI
+#                    uE-Info: 449 49 NIL 0 0 72 10 2 4 NIL ofnI
 #======================================================================
 
 # Williams Systme 7-11 Compiler
@@ -401,9 +401,80 @@
 #				  - modified to always produce default .OPTINFO file on -1 (STDOUT
 #					no longer an option)
 #				  - made -O work for -1 and -2
+#				  - v1.0.0
+#	Jul 16, 2025: - BUG: still contained shell and Mercurial dependencies that
+#						 I used in PEMBOT and TCM, but replaced with better 
+#						 {ShellCmd} encoder in Ideal
+#				  - modified link options -l and -I to work only when env var
+#					$C711_OPENSSL_CMD is set
+#				  - v1.0.1
+#	Jul 22, 2025: - added .ERROR, .ELSE_IFDEF (v1.1)
+#	Jul 23, 2035: - adapated to WPC Sol# -> SolCmd#
+#	Jul 25, 2025: - BUG: .ELSE_IFDEF did not work correctly
+#				  - added syntax checking for PRAGMAs in non-compiled code
+#	Jul 26, 2025: - added support for pseudo-address tags
+#	Jul 28, 2025: - changed encoder 2nd arg from line to addr
+#				  - replaced encoder prefix C711. by C711_encoder.
+#	Jul 29, 2025: - BUG: dots were not allowed in source file names
+#	Jul 30, 2025: - changed FX# to LampFX#
+#	Jul 31, 2025: - extended syntax to allow [] in alias names
+#	Aug  7, 2025: - added local/remote label warning
+#				  - added support to suppress warnings with -w in comment
+#	Aug 12, 2025: - DMD# => DisplayFX#
+#				  - BUG: label_value did not throw an error on DMD#28 any more
+#	Aug 13, 2025: - added support for Gamestring#, StringSpec#, Font#, DMD_X# and DMD_Y#
+#	Aug 14, 2025: - set $DP = 0x00 since this is always the case for WPC
+#				  - added support for any bracketing of address tags
+#	Aug 30, 2025: - added important relabel warning
+#	Sep 21, 2025: - added .DWWB
+#	Sep 28, 2025: - added support for .LAST_DEFINED
+#	Oct  3, 2025: - allow .LAST_DEFINED+# to work with labels
+#	Oct 30, 2025: - added EXPERIMENTAL feature allowing simple additions and subtractions
+#				    with aliases
+#	Nov  2, 2025: - greatly etended .DEFINE arithmetic support (stemming originally from
+#					Oct 3, mod) to include not-.LAST_DEFINED aliases; this may eventually
+#				    cause confusion with EXPERIMENTAL feature
+#	Nov  6, 2025: - made alias arithmetic compatible with Sys7-11
+#	Nov 12, 2025: - error message for invalid .LAST_DEFINED
+#				  - made invalid .LAST_DEFINED impossible
+#	Nov 23, 2025: - improved C711 error message of missing .ENDIF at EOF with info on
+#					which .IF is not closed (not very useful info)
+#	Nov 29, 2025: - remove remaing EOF error messages
+#	Dec 20, 2025: - (finally) made -L produce page addresses on WPC
+#	Dec 26, 2025: - improved -A to check addresses even on non-label lines
+#	Jan  3, 2026: - added generator support (back tics)
+#	Jan  9, 2026: - BUG: generator was evaluated even when code was not assembled
+#	Feb  7, 2026: - added .ASSUME_DEFINED xxx || yyy syntax (really ugly)
+#				  - fiddled with aliases
+#	Feb 18, 2026: - exported @warnings_suppressed
 # HISTORY END
 
 # RELEASE NOTES:
+#	- v1.2.0 (not yet released)
+#		- support for `generator`
+#		- support for ALIAS +/- const/ALIAS everywhere
+#		- support for .LAST_DEFINED[+/-const] during .DEFINEs
+#		- support for ALIAS+/-const (or ALIAS) during .DEFINEs
+#		- support for +/- constant arithmetic during alias expansion
+#		- any bracket characters allowed in address tags (e.g. >37:2555<, (37:2555), [37:2555{)
+#		- -A only checks default tags, e.g. <37:2555>
+#		- [] allowed in alias names
+#		- use -w in comments to suppress WARNINGs (currently only supported by remote/local
+#		  label warning)
+#	- v1.1.1
+#		- C711 bug fix to allow dots in source file names
+#	- v1.1.0
+#		- added .ERROR and .ELSE_IFDEF PRAGMAs
+#		- encoder API change
+#		- significant WPC improovements (esp. in-code references)
+#	- v1.0.0 and earlier versions had @COMPILATION_INFO and others with back-tic shell 
+#	  commands hard coded in the compiler; as of v1.0.1 all back-tics have been removed
+#	  except for:
+#		- {ShellCmd} interpreter, e.g. set ROM byte equal to (next) Mercurial revision in BCD
+#			.DEFINE GAME_ID 'hg tip | awk -F: "/^changeset:/{printf(\"$%d\n\",\$2+1)}"{ShellCmd}'
+#		- linker options, which require the openssl UNIX shell command; this must be
+#		  set in the environment for examle thusly:
+#			C711_OPENSSL_CMD=openssl C771 -l ...
 #	- jump6800 does not mark the target as mode-1 (no support for mode propagation
 #	  in asm_wvm_op yet)
 #	- Loop pseudo labels:
@@ -429,12 +500,17 @@
 #   - Interpreters
 #		- are loaded from $PATH/C711.$encoder
 #		- currently implemented
-# 	      	- {SolCmd}
-#   		- {ScoreByte}
+# 	      	- {SolCmd} {SolCmd.s6}
+#			- {SoundCmd.s6}
+#   		- {ScoreByte} {ScoreByte.s6} {ScoreByte.s6A}
+#			- {ScoreByte_noSound.s6} {ScoreByte_noSound.s6A}
+#			- {PinOp.s6}
 #       	- {LSB} {MSB}
 #	       	- {InvertByte}
-#			- {BitMask}			for lamps and flags
-#			- {ByteOffset}		for lamps and flags
+#			- {BitMask}			multiple args allowed
+#			- {InvBitMask}		multiple args allowed
+#			- {ByteOffset}		
+#			- {ShellCmd}		string arg
 #		- need {eval} for label arithmetic
 #			- simplistic arithmetic (+,-,&,|) needs to remain in eval_label() to allow
 #			  e.g. LDAA =SolBuf{LSB}+2
@@ -449,6 +525,8 @@
 #	- option -l <OS binary file> is used to compile game code
 #		- in addition to <OS binary file> it also reads (imports) the API
 #		- API file has same basename and .API extension
+#	- linker options require environment variable $C711_OPENSSL_CMD to be
+#	  set, e.g. to "openssl" 
 
 # System 11 Ideal Virtual Machine (IVM) Support:
 #   - Stage 1:  !oneShot                            IVM_STAGE1
@@ -507,7 +585,7 @@ our($OPTIMIZABLE_LABEL_PREFIX) = '`';                            		# this is pre
 
 my($PATH) = $0; $PATH =~ s{/[^/]*$}{};
 
-our($opt_1,$opt_2,$opt_a,$opt_A,$opt_c,$opt_C,$opt_d,$opt_D,$opt_f,$opt_F,
+our($opt_n,$opt_1,$opt_2,$opt_a,$opt_A,$opt_c,$opt_C,$opt_d,$opt_D,$opt_f,$opt_F,
 	$opt_g,$opt_i,$opt_I,$opt_J,$opt_k,$opt_L,$opt_l,$opt_m,$opt_o,$opt_O,$opt_r,$opt_R,
 	$opt_s,$opt_S,$opt_t,$opt_T,$opt_v,,$opt_w,$opt_x);
 
@@ -534,9 +612,9 @@ die("Usage: $0 " .
 		"\n\t[-T)race compilation (debug)] [trace -C)onditional compilation (debug)]" . 		# debugging
 		"\n\t[verify -A)ddress information in source (debug)]" .
 	    "\n\t<source file>\n")
-    unless &getopts('12Aa:cCdD:fF:g:i:IJkLl:mO:o:RrS:s:Tt:vw') && (@ARGV == 1);
+    unless &getopts('12Aa:cCdD:fF:g:i:IJkLl:mn:O:o:RrS:s:Tt:vw') && (@ARGV == 1);
 
-my($dummy,$basename,$ext) = ($ARGV[0] =~ m{([^/]+/)?([^\.]+)\.(.*)}); 
+my($dummy,$basename,$ext) = ($ARGV[0] =~ m{([^/]+/)?(.+)\.([^\.]+)}); 
 $basename = 'out' unless defined($basename);
 
 my($EXTRA);																# additional statements on the current line
@@ -582,16 +660,18 @@ if (m{^;!.*C711\s+}) {
 
 my(@vROMimage);                                                 		# PRIVATE: verification ROM image
 my(@AUTO_LABEL_DEF);													# PRIVATE: line numbers of auto label definitions for error messages
-my(@IF_STACK) = (0);                                            		# PRIVATE: conditional compilation (TOS 0: sentinel: outside any if; 1: then/else compiling; -1: then/else not compiling; -2: nested if, not compiling)
+our(@IF_STACK) = (0);                                            		# PRIVATE: conditional compilation (TOS 0: sentinel: outside any if; 1: then/else compiling; -1: then/else not compiling; -2: nested if, not compiling)
+my(@IF_STACK_LINE) = (-1);
 
 our(@ROM);																# output buffer
 our($ADDR,$MIN_ROM_ADDR,$MAX_ROM_ADDR);									# Sys6-11: CPU address space; WPC: 1MB ROM address space
 our($FIRST_ADDR);														# first address used in ROM
 our($RPG);																# Sys6-11: undefined; 		  WPC: current ROM page
-our($DP);																# undefined until .ASSUME_DP is used
+our($DP) = 0x00;														# always the case for WPC
 
 our($WMS_System,%System_Option); 										# source type
 local(our(%ALIAS,%ALIAS_REFD));                                 		# aliases (defines), number of references
+our($LAST_DEFINED) = 'X';												# .LAST pseudo-alias
 
 our(@SRC);																# source lines (used for optimizer and warnings)
 local(our(@LINE));														# source line number indexed by ADDR (used for optimizer and warnings)
@@ -609,9 +689,16 @@ our($MODE) = 0;															# compilation mode/label type; 0: undefined; 1: M6
 
 our(%JSR_TRG);															# number of calls to subroutines for -J
 
-our(@IF_CONT_LBL,@LOOP_DONE_LBL);										# structured programming
+our(@IF_CONT_LBL,@IF_CONT_LINE,@LOOP_DONE_LBL);							# structured programming
 
 our($IVM_DISABLED);														# flag indicating that IVM is disabled; set by .ENABLE_IVM/.DISABLE_IVM
+
+##	my($ALIAS_NAME_SPECCHARS) = '`~!@#%^*\(\)_\-=\[{\]}|:"<,>\./\?\]\[\*';
+##	my($ALIAS_NAME_RE) = "[A-Za-z$ALIAS_NAME_SPECCHARS][A-Za-z0-9$ALIAS_NAME_SPECCHARS]*";
+	my($ALIAS_NAME_SPECCHARS) = '`~!@#%^*\(\)_\-\+=\[{\]}|:"<,>\./\?\]\[\*';
+	my($ALIAS_NAME_SPECCHARS_NOARITH) = '`~!@#%^*\(\)_=\[{\]}|:"<,>\./\?\]\[\*';
+	my($ALIAS_NAME_RE) = "[A-Za-z0-9$ALIAS_NAME_SPECCHARS]+";
+	my($ALIAS_NAME_RE_NOARITH) = "[A-Za-z0-9$ALIAS_NAME_SPECCHARS_NOARITH]+";
 
 #----------------------------------------------------------------------
 # Load System Dependent Libraries
@@ -742,17 +829,21 @@ if (defined($opt_D)) { 											# define symbol from command line
 load_vROM(split(/,/,$opt_t)) if defined($opt_t);
 
 our($FREE_SP_ADDR);
-our($MERCURIAL_RELEASE,$COMPILATION_INFO,$COMPILATION_INFO77,$COMPILATION_TIMESTAMP);
+##our($MERCURIAL_RELEASE,$COMPILATION_INFO,$COMPILATION_INFO77,$COMPILATION_TIMESTAMP);
 
-chop($MERCURIAL_RELEASE =                                       # Compilation Information
-    `hg log 2>/dev/null | awk -F: '/^ch/{if (NR == 1) print "R."\$2+1}'`);
-chop($COMPILATION_INFO =                                        # BAD CATS (16-character display)
-    $MERCURIAL_RELEASE . `date '+ %m-%d-%Y'`);
-chop($COMPILATION_INFO77 =                                      # PIN BOT (2x7-character display)
-    $MERCURIAL_RELEASE . `date '+   %m%d%y'`);
-chop($COMPILATION_TIMESTAMP = uc(`date '+%h %d  %H %M '`));     # used for PIN BOT first
-printf(STDERR "$SRC [$COMPILATION_INFO]\n")                 # report on screen during 2nd pass
-    unless defined($opt_1 || $opt_L);
+## OLD DEFINITIONS LEFT FOR REFERENCE
+##chop($MERCURIAL_RELEASE =												# Compilation Information
+##	`hg log 2>/dev/null | awk -F: '/^ch/{if (NR == 1) print "R."\$2+1}'`);
+##chop($COMPILATION_INFO =												# BAD CATS (16-character display)
+##	$MERCURIAL_RELEASE . `date '+ %m-%d-%Y'`);
+##chop($COMPILATION_INFO77 =											# PIN BOT (2x7-character display)
+##	$MERCURIAL_RELEASE . `date '+	%m%d%y'`);
+
+unless (defined($opt_1) || $opt_L) {									# report on screen during 2nd pass
+	print(STDERR $SRC);
+	print(STDERR " [$opt_n]") if defined($opt_n);
+	print(STDERR "\n");
+}
     
 #----------------------------------------------------------------------
 # Load API
@@ -806,6 +897,8 @@ unless ($LIB_API eq '') {
 #----------------------------------------------------------------------
 
 if (defined($opt_l)) {
+	die("-l: need openssl command in environment (\$C711_OPENSSL_SHELLCMD)\n")
+		unless length($ENV{C711_OPENSSL_SHELLCMD}) > 0;
 	die("$opt_l: need LIB_MIN_ADDR for linking\n")						# check address range
 		unless defined($LIB_MIN_ADDR);
 	printf(STDERR "$opt_l: WARNING: system code (\$%04X-\$%04X) outside " .
@@ -813,7 +906,7 @@ if (defined($opt_l)) {
 						$LIB_MIN_ADDR,$LIB_MAX_ADDR,$MIN_ROM_ADDR,$MAX_ROM_ADDR)
 		if ($LIB_MIN_ADDR > $MAX_ROM_ADDR || $LIB_MAX_ADDR < $MIN_ROM_ADDR);
 
-	my($hd) = `openssl sha256 $opt_l`;									# verify sha256 hash (using openssl)
+	my($hd) = `$ENV{C711_OPENSSL_SHELLCMD} sha256 $opt_l`;									# verify sha256 hash (using openssl)
 	my($fn,$hash) = ($hd =~ m{^SHA2-256\((.*)\)= ([0-9a-fA-F]{64})$});
 	die("$opt_l: invalid hash specifier <$hd>\n")
         unless defined($hash);
@@ -846,8 +939,9 @@ if (defined($opt_l)) {
 my(@NO_OPT);															# addresses where optimization is not allowed; set by !! line prefix
 my(@optimization_suppressed);											# instructions that must not be optimized; set by .SUPPRESS_OPTIMIZATION
 my(@OP);																# address -> instruction for optimizer
-my($locked_page);														# page addr (MSB ROM address) for .[UN]LOCK_ROM_PAGE
+my($locked_page,$locked_page_line);										# page addr (MSB ROM address) for .[UN]LOCK_ROM_PAGE
 my($tag_rpg,$tag_addr);													# address info from <> line prefix
+our(@warnings_suppressed);												# addresses where no warnigns should be produced; set by -w in comments
 
 while (!eof()) {
 	if ($EXTRA) {														# additional statements on current line
@@ -867,6 +961,8 @@ while (!eof()) {
 		}
 	}
 	chomp;																# strip EOL
+	push(@warnings_suppressed,$ADDR)									# suppress warnings
+		if (m{;.*\s-w\b});
 	s{;.*}{};															# strip comments
 	if (m{^<([0-9A-Fa-f]{2})?:?([0-9A-Fa-f]{4})>}) {					# record address information for -A
 		$tag_rpg   = hex($1) if defined($1);
@@ -874,7 +970,7 @@ while (!eof()) {
 	} else {
 		undef($tag_rpg); undef($tag_addr);
 	}
-	s{^<([0-9A-Fa-f]{2}:)?[0-9A-Fa-f]{4}>\s+}{};						# strip disassembly addresses and leading whitespace
+	s@^[<>{}\(\)[\]]([0-9A-Za-f]{2}:)?[0-9A-Fa-f]{4}[<>{}\(\)[\]]\s*@@;	# strip disassembly addresses and leading whitespace
 	while (m{\\\s*$}) { 												# line continuation
 		$_ = $` . <>;
 		chomp;															# strip EOL
@@ -938,6 +1034,10 @@ while (!eof()) {
 			}
 	    }
 	}
+
+	if ($IF_STACK[$#IF_STACK]>=0 && m{`(.*)`}) {						# expand generators (backtics)
+		$_ = $` . `$1` . $';
+	}
     
     if (defined($ADDR)) {                                   			# store source statement for listing, warnings, optimization 
         $SRC[$ADDR] = $_;
@@ -974,19 +1074,30 @@ NO_ADDL:
 							unless ($ADDR == $tag_addr);
 					}
 				}
-				push(@newly_defined_label,define_label($`));
-				set_label_type($MODE) if ($MODE > 0);
-				shift(@_);
-				next if (@_ == 0);                              			# label-only line => nothing to compile
-			}
+           }
+			push(@newly_defined_label,define_label($`));
+			set_label_type($MODE) if ($MODE > 0);
+            shift(@_);
+            next if (@_ == 0);                              			# label-only line => nothing to compile
+        } else {														# line w/o label
+			if ($opt_A && defined($tag_addr) && defined($ADDR) && $_[0] ne '.ORG') {		# verify <> address information
+				if (defined($RPG)) {
+					die(sprintf("ROM reference mismatch (%02X:%04X expected, %02X:%04X found) at input line $.\n",$tag_rpg,$tag_addr,$RPG,code_addr()))
+						unless (code_addr() == $tag_addr) && ($RPG == $tag_rpg);
+				} else {
+					die(sprintf("ROM address mismatch (\$%04X expected, \$%04X found) at input line $.\n",$tag_addr,$ADDR))
+						unless ($ADDR == $tag_addr);
+				}
+            }
+        }        	
     
-			&expand_aliases;                                    			# expand aliases (except for .IFDEF, .IFNDEF, etc. which are handled in compile_pragma())
-			&expand_repeatBytes;											# expand $FF[512x] 255[2x]
-			&expand_bang;													# expand !longJSR
-			&decimalize;                                        			# convert all numbers to decimal (e.g. for .ORG); NB: does not deal with #$numbers
-			($OP,@OP_ARG) = @_;                                 			# make available to all subroutines (local)
-			$OP[$ADDR] = $OP;                                   			# make available to OPTIMIZER
-			printf(STDERR "\tOP[%04X] = ",$ADDR), print(STDERR "$OP @OP_ARG\n") if $opt_T;
+        &expand_aliases;                                    			# expand aliases (except for .IFDEF, .IFNDEF, etc. which are handled in compile_pragma())
+		&expand_repeatBytes;											# expand $FF[512x] 255[2x]
+		&expand_bang;													# expand !longJSR
+        &decimalize;                                        			# convert all numbers to decimal (e.g. for .ORG); NB: does not deal with #$numbers
+        ($OP,@OP_ARG) = @_;                                 			# make available to all subroutines (local)
+        $OP[$ADDR] = $OP;                                   			# make available to OPTIMIZER
+##        printf(STDERR "\tOP[%04X] = ",$ADDR), print(STDERR "$OP @OP_ARG\n") if $opt_T;
 
 
 			&unroll_structure;  	                              			# _IF, _Loop, etc.  
@@ -995,11 +1106,7 @@ NO_ADDL:
 			($OP,@OP_ARG) = @_;                                 			# make available to all subroutines (local)
     }
 
-##  next if &compile_pragma;                              				# .ORG, .DB, .ENDIF, etc.; also done while not currently compiling code!
-	if (compile_pragma()) {
-        printf(STDERR "\tROM[%04X] = $ROM[$ADDR-1]\n",$ADDR-1) if $opt_T;
-		next;
-    }
+	next if &compile_pragma;                              				# .ORG, .DB, .ENDIF, etc.; also done while not currently compiling code!
 
     if ($IF_STACK[$#IF_STACK] >= 0) {                       			# currently assembling code
     	if ($opt_A && defined($tag_addr)) {								# verify <> address information
@@ -1028,14 +1135,14 @@ NO_ADDL:
     }
 }
 
-die("missing .ENDIF at EOF\n")											# End-of-File checks
+die("Unfinished .IF at input line $IF_STACK_LINE[$#IF_STACK])\n")	# End-of-File checks
     if ($IF_STACK[$#IF_STACK] != 0);
 
-die("missing .UNLOCK_PAGE at EOF\n")
-	if defined($locked_page);
+die("Unfinished .IF at input line $IF_CONT_LINE[$#IF_CONT_LINE]\n")
+    if (@IF_CONT_LINE);
 
-die("Unfinished if statement(s) at EOF [@IF_CONT_LBL]\n")
-    if (@IF_CONT_LBL);
+die("Unfinished .LOCK_PAGE at input line $locked_page_line\n")
+	if defined($locked_page);
 
 if (@LOOP_DONE_LBL) {
     print(STDERR "Unfinished loop statement(s) at EOF:\n");
@@ -1136,6 +1243,8 @@ unless ($opt_w || $opt_L) {
 produce_output();                                           # output either code listing or ROM image files
 
 if (defined($opt_I)) {										# output Interface (API)
+	die("-I: need openssl command in environment (\$C711_OPENSSL_SHELLCMD)\n")
+		unless length($ENV{C711_OPENSSL_SHELLCMD}) > 0;
 	printf("code_address_range(0x%04X,0x%04X);\n",
 		$MIN_ROM_ADDR,$MAX_ROM_ADDR);
 	my($sum,$carry) = (0,0);
@@ -1153,7 +1262,7 @@ if (defined($opt_I)) {										# output Interface (API)
 	printf("code_checksum(0x%02X);\n",$sum);		
 
 	if (defined($opt_o)) {									# single linked output 
-		chomp(my($hash) = `openssl sha256 $opt_o`);
+		chomp(my($hash) = `$ENV{C711_OPENSSL_SHELLCMD} sha256 $opt_o`);
 		print("code_hash('$hash');\n");
     }
 	foreach my $lbl (sort { $LBL{$a} <=> $LBL{$b} } keys(%LBL)) {
@@ -1340,7 +1449,7 @@ sub check_duplicate_label_types()
 	sub define_label($@)
 	{
 		my($lbl,$addr,$allow_relabel) = @_;
-##		printf(STDERR "define_label($lbl,%04X,$allow_relabel) [%02X:%04X]\n",$addr,$RPG,code_addr($addr)) if $opt_T;
+		printf(STDERR "define_label($lbl,%04X,$allow_relabel) [%02X:%04X]\n",$addr,$RPG,code_addr($addr)) if $opt_T;
 
 		if ($lbl eq 'ANALYSIS_GAP') {													# ignore gap labels
 			$last_label_addr = -1;
@@ -1378,7 +1487,11 @@ sub check_duplicate_label_types()
 				$nPG = sprintf("%02X:",$RPG);
 			}
 
-			return if defined($LBL[$addr]) && $lbl =~ m{^RAM_[0-9A-Fa-f]+$}; 			# ignore re-labling attempts with auto-generated label
+			if (defined($LBL[$addr]) && $lbl =~ m{^RAM_[0-9A-Fa-f]+$}) {	 			# ignore re-labling attempts with auto-generated label
+				printf(STDERR "WARNING: ignoring relabel attempt from $LBL[$addr] to $lbl at address \$$oPG%04X at input line $.\n",$addr)
+					unless $opt_w;
+				return;
+			}
 
 			printf(STDERR "WARNING: re-defining label $LBL[$addr] at address \$$oPG%04X to $nPG$lbl at input line $.\n",$addr)
 				if !$allow_relabel && $addr!=$last_label_addr							# multiple labels at same address allowed
@@ -1396,6 +1509,8 @@ sub check_duplicate_label_types()
 		$LBL{$lbl} = $addr;
 		$LBP{$lbl} = $RPG;																# undef except in WPC
 		$LBL[$addr] = $lbl;
+
+		print(STDERR "LBL{$lbl} = $LBL{$lbl}; LBP{$lbl} = $LBP{$lbl}; LBL[$addr] = $LBL[$addr]\n") if $opt_T;
 
 		return $lbl;
 	}
@@ -1435,19 +1550,27 @@ sub labelValue($$)																		# addr<0: line no; addr>=0: address
 		}
 	} else {																			# not force-compilation
 		if ($WMS_System =~ m{^WPC}) {													# WPC
+			my($cpg) = code_PG($addr);
 			my($pg,$l) = ($lbl =~ m{^([0-9A-Fa-f]{2}:)?(.*)$});
-			unless (defined($pg)) {														# no RPG info: 1) same pg, 2) prime RE, 3) low address
-##				printf(STDERR "searching for $lbl (RPG = %02X)\n",code_PG($addr));
-				if (defined($LBL{sprintf("%02X:$lbl",code_PG($addr))})) {
-					$lbl = sprintf("%02X:$lbl",code_PG($addr));
+			if (defined($pg)) {
+				$pg = hex(substr($pg,0,2));
+			} else {
+##				printf(STDERR "searching for $lbl (RPG = %02X)\n",$cpg);
+				if (defined($LBL{sprintf("%02X:$lbl",$cpg)})) {
+					$pg = $cpg;
+					$lbl = sprintf("%02X:$lbl",$pg);
 ##					print(STDERR "$lbl found\n");
 				} elsif (defined($LBL{"FF:$lbl"})) {
+					$pg = 0xFF;
 					$lbl = "FF:$lbl";
 ##					print(STDERR "$lbl found\n");
 				}
 			}
 			die(sprintf("Undefined label <$lbl> at input line %d\n",$line))
-				unless numberp($LBL{$lbl}) || $lbl =~ m{#[0-9A-Fa-f]{2}$};
+				unless numberp($LBL{$lbl}); 
+			my($llb) = sprintf("%02X:$l",$cpg);				
+			print(STDERR "WARNING: Referencing remote label <$lbl> while there also is local label <$llb> defined at input line $line\n")
+				if !$opt_w && !isMember($addr,@warnings_suppressed) && $pg != $cpg && numberp($LBL{$llb});
 	        return $LBL{$lbl};
 		} else {	
 			if (numberp($LBL{$lbl}) || $lbl =~ m{#[0-9A-Fa-f]{2}$}) {																	# System 7-11
@@ -1549,6 +1672,7 @@ sub resolve_labels()
 {
     for (my($a)=$MIN_ROM_ADDR; $a<=$MAX_ROM_ADDR; $a++) {                               # first, substitute all label values
         next unless defined($ROM[$a]);
+        printf(STDERR "%05X: $ROM[$a]: resolving label\n",$a) if $opt_T;
 
         if ($_[0]) {                                                                    # debug dump
             if (numberp($ROM[$a])) {
@@ -1596,34 +1720,42 @@ sub resolve_labels()
             }
             next;
         }
+        print(STDERR "\tnot a decimal\n") if $opt_T;
 
         next if ($ROM[$a] =~ m{^\@});                                                   # leave resolution of @COMPILER_VARIABLES for later
 		next if isMember($ROM[$a],'16-BIT VALUE','WPC REFERENCE');
+        print(STDERR "\tnot a compiler special\n") if $opt_T;
 
         $ROM[$a] = hex($1) if ($ROM[$a] =~ m{^\$([0-9A-Fa-f]+)$});                      # turn $hex and %binary numbers into decimals
         $ROM[$a] = eval('0b' . $1) if ($ROM[$a] =~ m{^%([01]+)$});
         die(sprintf("<%04X> $@\n",$a)) unless defined($ROM[$a]);
 		next if numberp($ROM[$a]); 														# we are done, if we have a number
+        print(STDERR "\tnot a hex or binary\n") if $opt_T;
 
 		if ($WMS_System =~ m{^WPC}) {
-			if ($ROM[$a] =~ m/^Adj#([0-9A-Fa-f]{2})([-+|&].*)?$/ || 					# substitute all system identifiers
-				$ROM[$a] =~ m/^Sol#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
+			if ($ROM[$a] =~ m/^Adj#([0-9A-Fa-f]{2})([-+|&].*)?$/ || 					# substitute hex literals
 				$ROM[$a] =~ m/^Bitgroup#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
 				$ROM[$a] =~ m/^Switch#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
 				$ROM[$a] =~ m/^Sound#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
 				$ROM[$a] =~ m/^Error#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
-				$ROM[$a] =~ m/^DMD#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
-				$ROM[$a] =~ m/^FX#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^DisplayFX#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^LampFX#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
 				$ROM[$a] =~ m/^Thread#([0-9A-Fa-f]{4})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^StringSpec#([0-9A-Fa-f]{4})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^Font#([0-9A-Fa-f]{2})([-+|&].*)?$/ ||
 				$ROM[$a] =~ m/^Audit#([0-9A-Fa-f]{4})([-+|&].*)?$/) {
 					$ROM[$a] = hex($1) . $2;											# decimal, and with trailing arithmetic (e.g. Lamp#3C|$40)
 					next if numberp($ROM[$a]);											# we are done, if we have a number
-	        }
-			if ($ROM[$a] =~ m/^Lamp#(\d{1,3})([-+|&].*)?$/) {
+			}
+			if ($ROM[$a] =~ m/^Lamp#(\d{1,3})([-+|&].*)?$/ ||							# substitue decimal literals
+				$ROM[$a] =~ m/^Gamestring#(\d{1,3})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^DMD_X#(\d{1,3})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^DMD_Y#(\d{1,2})([-+|&].*)?$/ ||
+				$ROM[$a] =~ m/^SolCmd#(\d+)([-+|&].*)?$/) {
 				$ROM[$a] = $1 . $2;														# decimal, and with trailing arithmetic (e.g. Lamp#3C|$40)
 				next if numberp($ROM[$a]);												# we are done, if we have a number
 			}
-	        if ($ROM[$a] =~ m/^Flag#([0-9A-Fa-f]{2})([-+|&].*)?$/) {					# flags are lamps with bit 6 set
+	        if ($ROM[$a] =~ m/^Flag#([0-9A-Fa-f]{2})([-+|&].*)?$/) {					# flags are lamps with bit 6 (low flags) or bit 7 (high flags) set
 	        	my($fno) = hex($1);
     	        $ROM[$a] = ($fno >= 0x40) ? $fno + 0x80 . $2
     	        						  : $fno + 0x40 . $2;
@@ -1656,6 +1788,7 @@ sub resolve_labels()
 				next if numberp($ROM[$a]);                                          
 			}
 		}
+        print(STDERR "\tnot a system identifier\n") if $opt_T;
 
         my($ms) = '^\\' . $EIGHT_BIT_LABEL_PREFIX;                                      # 8-bit relative address
         if ($ROM[$a] =~ m{$ms}) {                                                   
@@ -1728,11 +1861,13 @@ sub resolve_labels()
             $ROM[$a] = labelValue($a,$lbl);
             next;
         }
+        print(STDERR "\tnot an optimizable label\n") if $opt_T;
 
         if (numberp($LBL{$ROM[$a]})) {                                                  # if entire remaining string exists in list of labels, substitute its value
             $ROM[$a] = labelValue($a,$ROM[$a]);                                         # [ this allows re-defining apparent label arithmetic 
             next;                                                                       # (e.g. .LBL RAM_var $FF; .LBL RAM_var+1 $C000)]
         }
+        print(STDERR "\tnot an defined label ($ROM[$a]->$LBL{$ROM[$a]})\n") if $opt_T;
 
         #----------------------------------------------------------------------
         # Value Encoders / Data Types / Interpreters
@@ -1745,36 +1880,42 @@ sub resolve_labels()
         #       LDAB    =SolBuf{LSB}+2
         #----------------------------------------------------------------------
 
-			my($str,$encoder) = ($ROM[$a] =~ m/^'?(.+)\{([^}\s]+)\}'?/);					# "encoder" (e.g. LDAA #Sol_GI_playfield:off{SolCmd} )
-			if (defined($encoder)) {														# 	initial '? allows for strings with spaces e.g. in 'ls -l{ShellCmd}'
-				my($remainder) = $';
-	##			print(STDERR "encoder($str,$encoder) [$ROM[$a]]\n");
-				$encoder .= ".s$WMS_System"
-					if (-f "$PATH/C711.$encoder.s$WMS_System");
-				require "$PATH/C711.$encoder";
-				$encoder =~ s/\./_/g;														# replace . by _ in function name
-				my($ofs);																	# find statement base address
-				our($addr); die if defined($addr);											# UNUSED VARIABLE
-				for ($ofs=0; !defined($LINE[$a-$ofs]); $ofs++) {}
-				my($expr) = sprintf("$encoder('%s',%d);",$str,$LINE[$a-$ofs]);
-	#			print(STDERR "eval($expr)\n");
-	##          $ROM[$a] = sprintf("%d$remainder",eval($expr));
-				my($ev) = eval($expr);
-							die($@) if $@;
-				$ROM[$a] = $ev . $remainder;
-	#           printf(STDERR "ROM[%04X] = %02X\n",$a,$ROM[$a]);            
-			}
-			else {
-				#----------------------------------------------------------------------
-				# Simple Label Arithmetic
-				#----------------------------------------------------------------------
+  		my($str,$encoder);																# "encoder" (e.g. LDAA #Sol_GI_playfield:off{SolCmd} )
+  		if ($ROM[$a] =~ m{^'}) {														# string with embedded spaces, as in 'ls -l{ShellCmd}'
+  			($str,$encoder) = ($SRC[$a] =~ m{\s+'(.*){(.*)}'\s*$});
+  		} else {
+  			($str,$encoder) = ($ROM[$a] =~ m/^(.+)\{([^}\s]+)\}$/);
+  		}
+  		if (defined($encoder)) {														# 	initial '? allows for strings with spaces e.g. in 'ls -l{ShellCmd}'
+  			my($remainder) = $';
+  			print(STDERR "encoder($str,$encoder) [$ROM[$a]]\n") if $opt_T;
+  			$encoder .= ".s$WMS_System"
+  				if (-f "$PATH/C711_encoder.$encoder.s$WMS_System");
+  			require "$PATH/C711_encoder.$encoder";
+  			$encoder =~ s/\./_/g;														# replace . by _ in function name
+  			my($ofs);																	# find statement base address
+  			our($addr); die if defined($addr);											# UNUSED VARIABLE
+  			for ($ofs=0; !defined($LINE[$a-$ofs]); $ofs++) {}
+  			my($expr) = sprintf("$encoder('%s',%d);",$str,$a-$ofs);
+  			my($ev) = eval($expr);
+              die($@) if $@;
+  			$ROM[$a] = $ev . $remainder;
+  			printf(STDERR "ROM[%04X] = %02X\n",$a,$ROM[$a]) if $opt_T;
+  		} else {
+          print(STDERR "\tnot an encoder\n") if $opt_T;
+  		}
+
+        #----------------------------------------------------------------------
+        # Simple Label Arithmetic
+        #----------------------------------------------------------------------
 
 ##		printf(STDERR "-> %X\n",$a);
-				my($lval) = eval_label($ROM[$a],$a);                                            # label with simple arithmetic
-				if (defined($lval)) {
-						$ROM[$a] = $lval;
-						next;
-				}
+        my($lval) = eval_label($ROM[$a],$a);                                            # label with simple arithmetic
+        if (defined($lval)) {
+            $ROM[$a] = $lval;
+            next;
+        }
+        print(STDERR "\tnot an expression\n") if $opt_T;
 
 				$ROM[$a] = labelValue($a,$ROM[$a]);												# this will always trigger an error unless ROM[a] is numeric
 			}
@@ -1929,10 +2070,11 @@ sub match_pragma($$$)
 sub expand_aliases()                                        
 {														    
 	for (my($i)=0; $i<@_; $i++) {
-		next if ($i == 1 && match_pragma($_[0],'.DEF','INE'));							# forgeting this caused a lot of confusion when I accidentally redefined the number 47 :)
-		next if ($i == 1 && match_pragma($_[0],'.UNDEF','INE'));
-		next if ($i == 1 && match_pragma($_[0],'.DECL','ARE'));
+		next if ($i <= 1 && match_pragma($_[0],'.DEF','INE'));							# forgeting this caused a lot of confusion when I accidentally redefined the number 47 :)
+		next if ($i <= 1 && match_pragma($_[0],'.UNDEF','INE'));
+		next if ($i <= 1 && match_pragma($_[0],'.DECL','ARE'));
 		next if match_pragma($_[0],'.IFDEF','');
+		next if match_pragma($_[0],'.ELSE_IFDEF','');
 		next if match_pragma($_[0],'.IFNDEF','');
 		next if match_pragma($_[0],'.IFUNDEF','');
 		next if match_pragma($_[0],'.ASSUME_DEFINED','');
@@ -1943,13 +2085,26 @@ sub expand_aliases()
 				my($p1,$p2);
 				($p1,$p2,$alias,$post) = ($_[$i] =~ m{^([\#\[])?([A-Za-z0-9_]+\()?([A-Za-z\?0-9_\.\#\+-]+)(.*)$});
 				$pre = $p1 . $p2;
-				# print(STDERR "$_[$i] $p1/$p2/$alias/$post [$ALIAS{$alias}]\n");
-			} else {	
-				($pre,$alias,$post) = ($_[$i] =~ m{^([\#\[])?([A-Za-z\?0-9_\.\#\+-]+)(.*)$});
+				print(STDERR "$_[$i] $p1/$p2/$alias/$post [$ALIAS{$alias}]\n") if $opt_T;
+            } else {																	# not encoder
+				($pre,$alias,$post) = ($_[$i] =~ m{^\[})								# M6809 indirect extended
+								    ? ($_[$i] =~ m{^(\[\#?)([A-Za-z\?0-9_\.\#\[\]\+-]+)(.*\])$})
+								    : ($_[$i] =~ m{^(\#)?([A-Za-z\?0-9_^\.\#\[\]\+-]+)(.*)$}); # just an alias
+##								    : ($_[$i] =~ m{^(\#)?($ALIAS_NAME_RE)(.*)$}); 		# just an alias (DOES NOT WORK!!!)
 			}
-			# print(STDERR "$_[$i] $pre/$alias/$post [$ALIAS{$alias}]\n");
+			print(STDERR "alias#$i($_[$i]) -> $pre/$alias/$post [$ALIAS{$alias}]\n") if $opt_T;
 
-			last unless defined($ALIAS{$alias});
+			if ($alias =~ m{(\D+)([+-])(\d+)$}) {										# alias with constant added or subtracted; EXPERIMENTAL FEATURE
+				last if ($1 eq '.') || ($1 eq '.LAST_DEFINED');							# . and .LAST_DEFINED handled elsewhere
+				if (!defined($ALIAS{$alias}) && numberp($ALIAS{$1})) {					# code must be able to handle T-800 in a string
+					print(STDERR "$1:$2:$3\n") if $opt_T;
+					$ALIAS_REFD{$1}++;
+					$_[$i] = sprintf("$pre%d$post",($2 eq '+')?($ALIAS{$1}+$3):($ALIAS{$1}-$3));
+					last;
+				}
+			}
+			last if numberp($alias);
+			last unless defined($ALIAS{$alias});										# regular alias
 			$ALIAS_REFD{$alias}++;
 			my(@sali) = split(/\s+/,$ALIAS{$alias});
 			if (@sali==1 || $ALIAS{$alias}=~m{^'}) {									# single word or multi-word string
@@ -1958,7 +2113,7 @@ sub expand_aliases()
 				splice(@_,$i,1,@sali);
 			}
 		}
-		# print(STDERR "$_[$i]\n\n");
+		print(STDERR "\t substituted <$_[$i]>\n") if $opt_T;
 	}
 }
 
@@ -2070,48 +2225,52 @@ sub find_free_space()
 
 sub produce_output()
 {
-    if ($opt_L) {                                                                               # code listing
-        my($src_line,$src_addr,$src_lbl,$a);
-        for ($a=$MIN_ROM_ADDR; $a<=$MAX_ROM_ADDR; $a++) {
-            next unless defined($SRC[$a]);                                                      # skip to next opcode
-            if (defined($src_addr)) {                                                           # if there was an opcode before (usually)
-                printf("<%04X> ",$src_addr);                                                    # print ROM address
-                my($bytes_done) = 0;
-                for (my($i)=0; $i<15; $i++) {                                                   # print (max 15) operation bytes
-                    $bytes_done |= ($i>0 && defined($SRC[$src_addr+$i]));
-                    if ($bytes_done) { printf("   "); }
-                    else             { printf("%02X ",$ROM[$src_addr+$i]); }
-                }
-                $src_line =~ s/(\w+)\s+/\1 /g;
-                if (length($src_lbl) > 0) {
-                    $src_line =~ s/^\s+//;
-                    $src_line = $' if ($src_line =~ m{^\^});                                    # allow for labels starting with ^
-                    $src_line =~ s{^$src_lbl:\s*}{}; 
-                    print("$src_lbl: $src_line\n");
-                } else {
-                    print("$src_line\n");                                                               
-                }
-            }
-            if ($a<=$MAX_ROM_ADDR) {
-                $src_line = $SRC[$a]; $src_addr = $a; $src_lbl = $LBL[$a];
-            }
-        } # for
-        printf("<%04X> ",$src_addr);                                                            # print ROM address of last statement
-        for (my($i)=0; $i<15; $i++) {                                                           # print (max 15) operation bytes
-            if ($src_addr+$i>$MAX_ROM_ADDR) { printf("   "); }
-            else                            { printf("%02X ",$ROM[$src_addr+$i]); }
-        }
-        $src_line =~ s/(\w+)\s+/\1 /g;
-        if (length($src_lbl) > 0) {
-            $src_line =~ s/^\s+//;
-            $src_line = $' if ($src_line =~ m{^\^});                                            # allow for labels starting with ^
-            $src_line =~ s/^$src_lbl:\s*//;
-            print("$src_lbl: $src_line\n");
-        } else {
-            print("$src_line\n");                                                               
-        }
-        exit(0);
-    } # if $opt_L
+	if ($opt_L) {																				# code listing
+		my($src_line,$src_addr,$src_lbl,$a);
+		for ($a=$MIN_ROM_ADDR; $a<=$MAX_ROM_ADDR; $a++) {
+			next unless defined($SRC[$a]);														# skip to next opcode
+			if (defined($src_addr)) {															# if there was an opcode before (usually)
+				if ($WMS_System eq 'WPC') {
+					printf("<%s> ",substr(code_ref($src_addr),1))								# print ROM address w/o $
+				} else {
+					printf("<%04X> ",$src_addr);												# print ROM address
+				}
+				my($bytes_done) = 0;
+				for (my($i)=0; $i<15; $i++) {													# print (max 15) operation bytes
+					$bytes_done |= ($i>0 && defined($SRC[$src_addr+$i]));
+					if ($bytes_done) { printf("   "); }
+					else			 { printf("%02X ",$ROM[$src_addr+$i]); }
+				}
+				$src_line =~ s/(\w+)\s+/\1 /g;
+				if (length($src_lbl) > 0) {
+					$src_line =~ s/^\s+//;
+					$src_line = $' if ($src_line =~ m{^\^});									# allow for labels starting with ^
+					$src_line =~ s{^$src_lbl:\s*}{}; 
+					print("$src_lbl: $src_line\n");
+				} else {
+					print("$src_line\n");															    
+				}
+			}
+			if ($a<=$MAX_ROM_ADDR) {
+				$src_line = $SRC[$a]; $src_addr = $a; $src_lbl = $LBL[$a];
+			}
+		} # for
+		printf("<%04X> ",$src_addr);															# print ROM address of last statement
+		for (my($i)=0; $i<15; $i++) {															# print (max 15) operation bytes
+			if ($src_addr+$i>$MAX_ROM_ADDR) { printf("	 "); }
+			else							{ printf("%02X ",$ROM[$src_addr+$i]); }
+		}
+		$src_line =~ s/(\w+)\s+/\1 /g;
+		if (length($src_lbl) > 0) {
+			$src_line =~ s/^\s+//;
+			$src_line = $' if ($src_line =~ m{^\^});											# allow for labels starting with ^
+			$src_line =~ s/^$src_lbl:\s*//;
+			print("$src_lbl: $src_line\n");
+		} else {
+			print("$src_line\n");															    
+		}
+		exit(0);
+	} # if $opt_L
 
 	if ($WMS_System == 6) {																		# System 6
 		if (defined($opt_o)) {																	# single linked output file
@@ -2212,18 +2371,23 @@ sub setROM($$)
 
 sub compile_common_pragma()
 {
-##  my($OP,@OP_ARG) = @_;
+##	print(STDERR "compile_common_pragma: OP=$OP ARGS=@OP_ARG [$IF_STACK[$#IF_STACK]]\n") if $opt_T;
 
-    #---------------------
-    # Conditional Assembly
-    #---------------------
+	#=======================================================
+	# First set of PRAGMAs have to be evaluated whether
+	# code is being compiled or not (conditional compilation)
+	#=======================================================
+
+    #-----------------------
+    # Conditional Comilation
+    #-----------------------
 
     if ($OP eq '.ENDIF') {                                                              # .ENDIF
         die("Syntax: .ENDIF (<@_> at input line $.)\n")
             unless (@OP_ARG == 0);
         die("unexpected .ENDIF at input line $.\n")                                     # no .IF to end
             if ($IF_STACK[$#IF_STACK] == 0);
-        pop(@IF_STACK);
+        pop(@IF_STACK); pop(@IF_STACK_LINE);
         printf(STDERR "%d: @_ -> [@IF_STACK]\n",$.) if defined($opt_C);
         return 1;
     }
@@ -2232,6 +2396,8 @@ sub compile_common_pragma()
         die("Syntax: .ELSE (<@_> at input line $.)\n")
             unless (@OP_ARG == 0);
         if ($IF_STACK[$#IF_STACK] == 1) {                                               # then, assembling -> else, not assembling
+            $IF_STACK[$#IF_STACK] = -1;
+        } elsif ($IF_STACK[$#IF_STACK] == -3) {                                         # then, not assembling, but previous clause assembled  -> else, not assembling
             $IF_STACK[$#IF_STACK] = -1;
         } elsif ($IF_STACK[$#IF_STACK] == -1) {                                         # then, not assembling -> else, assembling
             $IF_STACK[$#IF_STACK] = 1;
@@ -2243,10 +2409,11 @@ sub compile_common_pragma()
     }
 
     if ($OP eq '.IFDEF') {                                                              # .IFDEF
-        die("Syntax: .IFDEF id (<@_> at input line $.)\n")
+        die("Syntax: .IFDEF id [|| id[...]] (<@_> at input line $.)\n")
             unless (@OP_ARG >= 1);
 		if ($IF_STACK[$#IF_STACK] < 0) {												# currently not assembling => skip entire nested if
 			push(@IF_STACK,-2);
+			push(@IF_STACK_LINE,$.);
 		} else {																		# currently assembling	
 	        my($result);
     	    for (my($i)=0; $i<@OP_ARG; $i+=2) {
@@ -2258,10 +2425,37 @@ sub compile_common_pragma()
         		$result |= defined($ALIAS{$OP_ARG[$i]});
         	}
 			push(@IF_STACK,$result ? 1 : -1);
+			push(@IF_STACK_LINE,$.);
         }
         printf(STDERR "%d: @_ -> [@IF_STACK]\n",$.) if defined($opt_C);
         return 1;
     }
+
+    if ($OP eq '.ELSE_IFDEF') {                                                        	# .ELSE_IFDEF
+        die("Syntax: .ELSE_IFDEF id [|| id[...]] (<@_> at input line $.)\n")
+            unless (@OP_ARG >= 1);
+        if ($IF_STACK[$#IF_STACK] == 1) {                                               # then, assembling -> else, not assembling
+			$IF_STACK[$#IF_STACK] = -3;
+        } elsif ($IF_STACK[$#IF_STACK] == -1) {                                         # then, not assembling, no previous clause assembled -> else, assembling if condition true
+	        my($result);
+    	    for (my($i)=0; $i<@OP_ARG; $i+=2) {
+    	    	if ($i > 0) {
+    	    		die("cannot decode .ELSE_IFDEF (<@_> at input line $.)\n")
+    	    			unless ($OP_ARG[$i-1] eq '||');
+    	    	}
+        		$ALIAS_REFD{$OP_ARG[$i]}++;
+        		$result |= defined($ALIAS{$OP_ARG[$i]});
+        	}
+        	$IF_STACK[$#IF_STACK] = $result ? 1 : -1;
+        } elsif ($IF_STACK[$#IF_STACK] == -3) {                                         # then, not assembling, previous clause assembled -> else, not asembling
+        	$IF_STACK[$#IF_STACK] = -3;													# no change
+        } elsif ($IF_STACK[$#IF_STACK] != -2) {                                         # nested if, not assembling
+            die("unexpected .ELSE_IFDEF at input line $. [@IF_STACK]\n");
+        }
+        printf(STDERR "%d: @_ -> [@IF_STACK]\n",$.) if defined($opt_C);
+        return 1;
+    }
+		            
 
     if ($OP eq '.IFNDEF' || $OP eq '.IFUNDEF') {                                        # .IFUNDEF
         die("Syntax: .IFUNDEF id (<@_> at input line $.)\n")
@@ -2269,21 +2463,47 @@ sub compile_common_pragma()
         $ALIAS_REFD{$OP_ARG[0]}++;
         if ($IF_STACK[$#IF_STACK] >= 0) {
             push(@IF_STACK,defined($ALIAS{$OP_ARG[0]}) ? -1 : 1);
+			push(@IF_STACK_LINE,$.);
         } else {
             push(@IF_STACK,-2);
+			push(@IF_STACK_LINE,$.);
         }
         printf(STDERR "%d: @_ -> [@IF_STACK]\n",$.) if defined($opt_C);
         return 1;
     }
 
-    return 1 if ($IF_STACK[$#IF_STACK] < 0);                                            # NOT COMPILING CODE => IGNORE REMAINING PRAGMAS
+	if ($IF_STACK[$#IF_STACK] < 0) {													# not compiling code => syntax check still required
+	    return (isMember($OP,'.ERROR','.ASSUME_DEFINED','.ASSUME_UNDEFINED','.SUPPRESS_OPTIMIZATION','.LOCK_ROM_PAGE','.UNLOCK_ROM_PAGE') ||
+				match_pragma($OP,'.DEF','INE') ||
+				match_pragma($OP,'.UNDEF','INE') ||
+				match_pragma($OP,'.DECL','ARE') ||
+				isMember($OP,'.LBL','.LABEL','.RELBL','.RELABEL') ||
+				isMember($OP,'.DB','.DW','.DBW','.DBWB','.DBBW','.DWB','DWWB') ||
+                isMember($OP,'.ASCII','.NOP')) ? 1 : 0;
+    }
+
+	#=======================================================
+	# PRAGMAs below are ignord unless code is being compiled
+	#=======================================================
+
+    #-------
+    # Errors
+    #-------
+
+	die(".ERROR <@OP_ARG> at input line $.\n")											# .ERROR
+    	if ($OP eq '.ERROR');
 
 	if ($OP eq '.ASSUME_DEFINED') { 													# .ASSUME_DEFINED
-		die("Syntax: .ASSUME_DEFINED id[...] (<@_> at input line $.)\n")
+		die("Syntax: .ASSUME_DEFINED id[...] or id || id (<@_> at input line $.)\n")
 			unless (@OP_ARG >= 1);
-		for my $sym (@OP_ARG) {
-			die("Undefined alias <$sym> assumed defined at input line $.\n")
-				unless defined($ALIAS{$sym});
+		if (@OP_ARG==3 && $OP_ARG[1] eq '||') {
+			die("Both aliases undefined <@OP_ARG> at input line $.\n")
+				unless defined($ALIAS{$OP_ARG[0]}) || defined($ALIAS{$OP_ARG[2]});
+		} else {
+			for my $sym (@OP_ARG) {
+				die("Undefined alias <$sym> assumed defined at input line $.\n")
+					unless defined($ALIAS{$sym});
+			}
 		}
 		return 1;
 	}
@@ -2319,6 +2539,7 @@ sub compile_common_pragma()
 		die("Syntax: .LOCK_ROM_PAGE (<@_> at input line $.)\n")
 			unless (@OP_ARG == 0);
 		$locked_page = ($ADDR >> 8);
+		$locked_page_line = $.;
 		return 1;
 	}
 
@@ -2342,7 +2563,10 @@ sub compile_common_pragma()
 	if (match_pragma($OP,'.DEF','INE')) { 												# .DEFINE (define alias)
 		die("Syntax: .DEF[INE] name [value...] (<@_> at input line $.)\n")
 			unless (@OP_ARG >= 1);
-		die if ($OP_ARG[0] eq 'ALIAS_IS_DEFINED');
+		die("Invalid character in alias name <$OP_ARG[0]> at input line $. [$ALIAS_NAME_RE]\n")
+			unless ($OP_ARG[0] =~ m{^$ALIAS_NAME_RE$});				
+		die("Invalid (reserved) alias name <$OP_ARG[0]> at input line $.\n")
+			if ($OP_ARG[0] eq 'ALIAS_IS_DEFINED');
 		$ALIAS_REFD{$OP_ARG[0]}++;
 		if (@OP_ARG == 1) { 															# no argument (just define)
 			$ALIAS{$OP_ARG[0]} = 'ALIAS_IS_DEFINED';
@@ -2351,6 +2575,40 @@ sub compile_common_pragma()
 		} else {																		# non-string arguments
 			$ALIAS{$OP_ARG[0]} = "@OP_ARG[1..$#OP_ARG]";
 		}
+		$ALIAS{$OP_ARG[0]} = $LBL{$ALIAS{$OP_ARG[0]}} 									# handle labels with arithmetic in name (_REG-A)
+			if defined($LBL{$ALIAS{$OP_ARG[0]}});
+		if (!numberp($ALIAS{$OP_ARG[0]})												# handle simple arithmetic
+				&& $ALIAS{$OP_ARG[0]} =~ m{^($ALIAS_NAME_RE_NOARITH)([\+-])?(\S+)?\s*$}) {		
+			if (defined($3)) {
+				if ($1 eq '.LAST_DEFINED') {
+					$ALIAS{$OP_ARG[0]} = $LAST_DEFINED;									# handle .LAST_DEFINED; can be label or number
+					die("Invalid .LAST_DEFINED (no value) at input line $.\n")			# should not be possible (any more)
+						if ($ALIAS{$OP_ARG[0]} eq 'ALIAS_IS_DEFINED');
+					$ALIAS{$OP_ARG[0]} = labelValue(-99999,$ALIAS{$OP_ARG[0]})
+						unless numberp($ALIAS{$OP_ARG[0]});
+				} elsif (defined($ALIAS{$1})) {
+					$ALIAS{$OP_ARG[0]} = $ALIAS{$1};
+				} elsif (defined($LBL{$1})) {
+					$ALIAS{$OP_ARG[0]} = $LBL{$1};
+				} 
+				if (numberp($ALIAS{$OP_ARG[0]})) {										# Some VM literals like Reg-P0 must be left untouched
+					my($offset) = $3;
+					$offset = (defined($ALIAS{$3}))										# number, alias, or label
+							? $ALIAS{$3}
+							: labelValue(-99997,$3)
+						unless numberp($offset);
+					$ALIAS{$OP_ARG[0]} = ($2 eq '+')
+									   ? $ALIAS{$OP_ARG[0]} + $offset
+									   : $ALIAS{$OP_ARG[0]} - $offset;
+				}
+			} elsif ($1 eq '.LAST_DEFINED') {
+				$ALIAS{$OP_ARG[0]} = $LAST_DEFINED . $2;
+			}
+	    }
+			
+		$LAST_DEFINED = $ALIAS{$OP_ARG[0]}												# don't save .DEFINEs without value
+			unless ($ALIAS{$OP_ARG[0]} eq 'ALIAS_IS_DEFINED');
+##		print(STDERR "LAST_DEFINED = alias($OP_ARG[0]) = $LAST_DEFINED\n");
 		return 1;
 	}
 
@@ -2485,6 +2743,25 @@ sub compile_common_pragma()
 				printf("\$D711::Address = 0x%04X; &D711::def_ptr2lbl('$OP_ARG[0]');\n",$ADDR)
 					if ($opt_x);
 			}
+			$ROM[$ADDR++] = $OP_ARG[0];
+			$ROM[$ADDR++] = '16-BIT VALUE';
+			for (shift(@OP_ARG); @OP_ARG > 0; shift(@OP_ARG)) {
+				$ROM[$ADDR++] = $OP_ARG[0];
+			}
+			return 1;
+	    }
+
+		if ($OP eq '.DWWB') {																# .DWWB (define 2 words followed by byte(s))
+			die("Syntax: .DWWB word-val word-val byte-val[...] (<@_> at input line $.)\n")
+				unless (@OP_ARG >= 3);
+			set_label_type(3);
+			unless ($OP_ARG[0] =~ m{^([\$%]?)([0-9A-Fa-f]+)$}) {							# label
+				printf("\$D711::Address = 0x%04X; &D711::def_ptr2lbl('$OP_ARG[0]');\n",$ADDR)
+					if ($opt_x);
+			}
+			$ROM[$ADDR++] = $OP_ARG[0];
+			$ROM[$ADDR++] = '16-BIT VALUE';
+			shift(@OP_ARG);
 			$ROM[$ADDR++] = $OP_ARG[0];
 			$ROM[$ADDR++] = '16-BIT VALUE';
 			for (shift(@OP_ARG); @OP_ARG > 0; shift(@OP_ARG)) {

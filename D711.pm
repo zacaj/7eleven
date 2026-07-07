@@ -1,9 +1,9 @@
 #======================================================================
 #					 D 7 1 1 . P M 
 #					 doc: Fri May 10 17:13:17 2019
-#					 dlm: Tue Jul  8 09:15:32 2025
+#					 dlm: Sat Jun  6 11:49:42 2026
 #					 (c) 2019 idealjoker@mailbox.org
-#                    uE-Info: 3124 0 NIL 0 0 72 10 2 4 NIL ofnI
+#                    uE-Info: 2874 36 NIL 0 0 72 10 2 4 NIL ofnI
 #======================================================================
 
 # Williams System 6-11 Disassembler
@@ -317,6 +317,20 @@
 #					enabled substitution in labels
 #				  - added WPC FX# type
 #	Jul  8, 2025: - adapted other aliases to tentative Jul 6 change
+#	Jul 16, 2025: - modified def_string to always output .STR$len
+#	Jul 20, 2025: - added support for WPC_INTERPAGE_REF
+#				  - BUG: inCode refs treated LDX specially (LDY, LDU added)
+#	Jul 23, 2025: - added support for WPC SolCmd#
+#	Jul 26, 2025: - added pseudo-address tags to all .DEFINEs
+#	Jul 30, 2025: - changed FX# to LampFX#
+#	Aug 11, 2025: - modularized substitute_identifiers for WPC magic
+#	Aug 12, 2025: - changed @DMD to @Lamp_FX
+#	Aug 13, 2025: - BUG: duplicate empty lines after ANALYSIS_GAPs
+#	Aug 28, 2025: - added def_WBlist_hex
+#				  - added labeling to def_wordblock_hex
+#	Oct 22, 2025: - added support for <arg>:nolabel hint
+#	Jan 26, 2026: - adapted to use implicit :nolabel for e.g. 1:#StringSpec#
+#	Jun  6, 2026: - added def_wordbyteblock_hex
 # END OF HISTORY
 
 # TO-DO:
@@ -616,136 +630,152 @@ sub label_address($$@)                                          # save auto lbl 
 						 : sprintf('$%02X',$addr);
 }
 
-sub substitute_label($$)                                        # replace addresses in a single arg with labels
-{
-    my($opaddr,$ai) = @_;                                       # argument to process
+#----------------------------------------------------------------------
+# Substitute Labels
+#----------------------------------------------------------------------
+
+sub substitute_label($$)                                        		# replace addresses in a single arg with labels	
+{	
+    my($opaddr,$ai) = @_;                                       		# argument to process
 ##	printf(STDERR "substitute_label($OPA[$opaddr][$ai]) at %04X (_cur_RPG = %2X)\n",$opaddr,$_cur_RPG);
-	my($prefix,$opa) = ($OPA[$opaddr][$ai] =~ m{^([<>]?)(.*)$});	# addressing-mode prefix < (direct) or > (extended)
+	my($prefix,$opa) = ($OPA[$opaddr][$ai] =~ m{^([<>]?)(.*)$});		# addressing-mode prefix < (direct) or > (extended)
 
-    return $prefix.$opa if ($nolabel[$opaddr]);					# labeling suppressed at this addr
+    return $prefix.$opa if ($nolabel[$opaddr]);							# labeling suppressed at this addr
 
-	my($taddr) = ($opa =~ m{^\[\$([0-9A-Fa-f]{4})\]$}); 		# [$xxxx] => indirect extended
+	my($taddr) = ($opa =~ m{^\[\$([0-9A-Fa-f]{4})\]$}); 				# [$xxxx] => indirect extended
 	if (defined($taddr)) {
 		$taddr = hex($taddr);
 		die(sprintf('%02X:%04X',$_cur_RPG,$taddr))
 			unless $taddr>=0x8000 || $taddr<=0x4000;
-		my($lbl) = $LBL[$taddr];									# check if there is a user label (in the correct ROM page)
-		if (defined($lbl)) {										# there is one => use it
-			$Lbl_refs{$lbl}++;										# update reference count ($lbl includes page prefix)
-			return '[' . $lbl . ']';								# return label
+		my($lbl) = $LBL[$taddr];										# check if there is a user label (in the correct ROM page)
+		if (defined($lbl)) {											# there is one => use it
+			$Lbl_refs{$lbl}++;											# update reference count ($lbl includes page prefix)
+			return '[' . $lbl . ']';									# return label
 	    }
 	}
 
-    my($pf,$taddr,$mark) = ($opa =~ m{^(\#?\$)([0-9A-Fa-f]+)(!?)$}); # hex number ($ followed by hex digits followed by optional !) => potential address
+    my($pf,$taddr,$mark) = ($opa =~ m{^(\#?\$)([0-9A-Fa-f]+)(!?)$}); 	# hex number ($ followed by hex digits followed by optional !) => potential address
 
-    unless (defined($taddr)) {									# not an address (i.e. a label)
-		if ($opa =~ m{(^[0-9A-F]{2}):} &&						# remove PG: prefix for labels on same page or in prime RE
+    unless (defined($taddr)) {											# not an address (i.e. a label)
+		if ($opa =~ m{(^[0-9A-F]{2}):} &&								# remove PG: prefix for labels on same page or in prime RE
 			(hex($1) == 0xFF ||
 				(hex($1)==$_cur_RPG && $opaddr>=0x4000 && $opaddr<0x8000))) {
 			return $prefix.$';
-		} else {												# otherwise, just return original prefix and label
+		} else {														# otherwise, just return original prefix and label
 			return $OPA[$opaddr][$ai];
 		}
 	}
-																# here we have an address 
-	return $prefix.$pf.$taddr if ($mark eq '!');				# address marked with trailing '!' (.DB, .DW) => do not label it
+																		# here we have an address 
+	return $prefix.$pf.$taddr if ($mark eq '!');						# address marked with trailing '!' (.DB, .DW) => do not label it
     
-	$taddr = hex($taddr);										# decimalize
-	my($imm) = (substr($opa,0,1) eq '#')						# immediate addressing marker
+	$taddr = hex($taddr);												# decimalize
+	my($imm) = (substr($opa,0,1) eq '#')								# immediate addressing marker
 			 ? substr($opa,0,1) : '';						    
-	return $prefix.$opa 										# don't substitute 8-bit immediate values, except for LDX(?)
-		if ($taddr == 0 || ($imm && $taddr<0x100 && $OP[$opaddr] ne 'LDX'));
 
-##	die("$_cur_RPG,$OP[$opaddr],$OPA[$opaddr][0],$taddr,$ai") if ($opaddr == 0x8001);;
-	my($cpg);													# caller page id for 3-byte WPC refs stored in 2 arguments (.DR and syscalls)
-	if (defined($_cur_RPG) &&									# switch page to pointee (taken from argument after address)
+	return $prefix.$opa 												# don't substitute 8-bit immediate values, except for LDX, LDY, LDU
+		if ($taddr == 0 ||
+			($imm && $taddr<0x100 &&
+					 !isMember($OP[$opaddr],'LDX','LDY','LDU')));
+
+	my($cpg);															# caller page id for WPC refs 
+
+	if ($imm && defined($_cur_RPG)										# handle WPC inter-page references decoded by in disassemble_inCode_refs()
+			 && isMember($OP[$opaddr],'LDX','LDY','LDU')
+			 && defined($WPC_INTERPAGE_REF[$_cur_RPG][$taddr])) {
+		my($pga) = $WPC_INTERPAGE_REF[$_cur_RPG][$taddr];				# reference in current pg to taddr in target pg
+		$cpg = select_WPC_RPG($pga)										# change RPG to rom page of reference (cpg is original page, the page of the code)
+			if (numberp($pga) && $pga>=0 && $pga<0x3E);
+	}
+
+##	die("$_cur_RPG,$OP[$opaddr],$OPA[$opaddr][0],$taddr,$ai") if ($opaddr == 0x8001);; # refs stored in 2 arguments (.DR and syscalls)
+	if (defined($_cur_RPG) &&											# switch page to pointee (taken from argument after address)
 		defined($OPA[$opaddr][$ai+1]) &&
-##		$_cur_RPG != 0xFF &&
 		$taddr>=0x4000 && $taddr<0x8000) {
-##			printf(STDERR "potential WPC ref at %02X:%04X -> %04X\n",$_cur_RPG,$opaddr,$taddr);
+			printf(STDERR "potential WPC ref at %02X:%04X -> %04X\n",$_cur_RPG,$opaddr,$taddr) if $opaddr == 0x7A24 && $_cur_RPG == 0x31;
 			my($pga) = $OPA[$opaddr][$ai+1];
 			$pga = hex($1) if ($pga =~ m{^\$([0-9A-F]{2})$});
-			$cpg = select_WPC_RPG($pga,13),						# change RPG to rom page of reference (cpg is original page, the page of the code0
+			$cpg = select_WPC_RPG($pga,13)								# change RPG to rom page of reference (cpg is original page, the page of the code)
 				if (numberp($pga) && $pga>=0 && $pga<0x3E);
 	}
 
-	my($lbl) = $LBL[$taddr]; 									# check if there is a user label (in the correct ROM page)
-	if (defined($lbl)) {										# there is one => use it
-		$Lbl_refs{$lbl}++;										# update reference count ($lbl includes page prefix)
+	my($lbl) = $LBL[$taddr]; 											# check if there is a user label (in the correct ROM page)
+	if (defined($lbl)) {												# there is one => use it
+		$Lbl_refs{$lbl}++;												# update reference count ($lbl includes page prefix)
 
-		if (defined($_cur_RPG)) {								# WPC
-			if ($_cur_RPG == 0xFF || $_cur_RPG == $cpg) {		# pointee in prime RE or on same page as code -> remove PG prefix
+		if (defined($_cur_RPG)) {										# WPC
+			if ($_cur_RPG == 0xFF || $_cur_RPG == $cpg) {				# pointee in prime RE or on same page as code -> remove PG prefix
 				$lbl = $' if ($lbl =~ m{^[0-9A-F]{2}:});
-			} elsif (defined($cpg)) {							# pointee on different page -> leave prefix but return to code page
+			} elsif (defined($cpg)) {									# pointee on different page -> leave prefix but return to code page
 				select_WPC_RPG($cpg,14);
 	        }
 	    }
-		return $prefix.$imm.$lbl;								# return user label
+		return $prefix.$imm.$lbl;										# return user label
 	}
 
-    my($auto_lbl) = $AUTO_LBL[$taddr];                           # use auto label if defined
-    select_WPC_RPG($cpg,15) if defined($cpg);					# return to code page 
+    my($auto_lbl) = $AUTO_LBL[$taddr];                           		# use auto label if defined
+    select_WPC_RPG($cpg,15) if defined($cpg);							# return to code page 
 
-##  return $prefix.$opa unless defined($auto_lbl);				# return original prefix and address if there is no auto labele, either
 	return $OPA[$opaddr][$ai] unless defined($auto_lbl);				# return original prefix and address if there is no auto labele, either
 
-    if (defined($Lbl{$auto_lbl})) {                             # auto label already defined
-        if (numberp($Lbl{$auto_lbl})) {							# matching non-WPC label
+    if (defined($Lbl{$auto_lbl})) {                             		# auto label already defined
+        if (numberp($Lbl{$auto_lbl})) {									# matching non-WPC label
             if ($Lbl{$auto_lbl} == $taddr) {                     
                 $Lbl_refs{$auto_lbl}++;
                 return $prefix.$imm.$auto_lbl;
             }
-        } else {												# WPC label
+        } else {														# WPC label
             my($pg,$ad) = split(':',$Lbl{$auto_lbl});
             die unless ($pg == $LblPg{$auto_lbl});
             $pg = hex($pg); $ad = hex($ad);
-            if (($ad == $taddr) && ($pg==$_cur_RPG || $pg==0xFF)) {	# matching WPC label 
+            if (($ad == $taddr) && ($pg==$_cur_RPG || $pg==0xFF)) {		# matching WPC label 
                 $Lbl_refs{$auto_lbl}++;
-                if ($_cur_RPG==$cpg || $cur_RPG==0xFF) {		# label on same page or in prime RE => remove pg prefix
+                if ($_cur_RPG==$cpg || $cur_RPG==0xFF) {				# label on same page or in prime RE => remove pg prefix
                 	$auto_lbl = $' if ($auto_lbl =~ m{^[0-9A-F]{2}:});
-                } elsif (defined($cpg)) {						# label not on same page -> return to code page
+                } elsif (defined($cpg)) {								# label not on same page -> return to code page
                 	select_WPC_RPG($cpg,16);
                 }
-                return $prefix.$imm.$auto_lbl;					# return auto label
+                return $prefix.$imm.$auto_lbl;							# return auto label
             }
         }
-        my($i);													# non-matching auto label -> create unique alternative
-        for ($i=1; defined($Lbl{"${auto_lbl}$i"}); $i++) {		# (unsure when this can happen and, if so, if code works for WPC)
-            return $prefix.$imm."${auto_lbl}$i"                 # already defined alternative label (even more unsure when this can happen)
+        my($i);															# non-matching auto label -> create unique alternative
+        for ($i=1; defined($Lbl{"${auto_lbl}$i"}); $i++) {				# (unsure when this can happen and, if so, if code works for WPC)
+            return $prefix.$imm."${auto_lbl}$i"                 		# already defined alternative label (even more unsure when this can happen)
                 if ($Lbl{"${auto_lbl}$i"} == $taddr);
         }
-        $auto_lbl = "${auto_lbl}$i";                            # new, unique label
+        $auto_lbl = "${auto_lbl}$i";                            		# new, unique label
     }
-    setLabel($auto_lbl,$taddr);                                  # define label (auto label)
+    setLabel($auto_lbl,$taddr);                                  		# define label (auto label)
     $Lbl_refs{$auto_lbl}++;
     return $prefix.$imm.$auto_lbl;
 }
 
-sub substitute_labels(@)                                        # replace addresses with labels wherever possible
+sub substitute_labels(@)                                        		# replace addresses with labels wherever possible
 {
     my($fa,$la) = @_;
     $fa = 0 unless defined($fa);
     $la = $#ROM unless defined($la);
 
-    for (local($addr)=$fa; $addr<=$la; $addr++) {
-        for (my($i)=0; $i<@{$OPA[$addr]}; $i++) {
-            $OPA[$addr][$i] = substitute_label($addr,$i);
+    for (local($addr)=$fa; $addr<=$la; $addr++) {						# don't substitute labels for 1:nolabel and 1:#LampFX#
+        for (my($i)=1; $i<=@{$OPA[$addr]}; $i++) {
+        	my($opa) = ($REM[$addr] =~ m{\b$i:(\S+)});
+            $OPA[$addr][$i-1] = substitute_label($addr,$i-1)
+            	unless ($opa eq 'nolabel' || $opa =~ m{#$});
         }
     }
-    foreach my $addr (keys(%label_arith_exprs)) {               # substitude expressions defined with def_lbl_arith()
+    foreach my $addr (keys(%label_arith_exprs)) {               		# substitude expressions defined with def_lbl_arith()	
         die unless (@{$OPA[$addr-1]} == 1);
         die if ($WMS_System =~ m{^WPC});
         $OPA[$addr-1][0] = ($OPA[$addr-1][0] =~ /^#/) ? '#' : '';
         $OPA[$addr-1][0] .= $label_arith_exprs{$addr};
     }
-    foreach my $addr (keys(%pointer)) {                         # substitude labels defined with def_ptr2lbl()
+    foreach my $addr (keys(%pointer)) {                         		# substitude labels defined with def_ptr2lbl()
         die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr)) unless (@{$OPA[$addr]} == 1);
         die if ($WMS_System =~ m{^WPC});
         $OPA[$addr][0] = $pointer{$addr};
     }
 }
 
-sub disassemble_unfollowed_labels()                             # from begin/end6800 and def_byteblock_code
+sub disassemble_unfollowed_labels()                             		# from begin/end6800 and def_byteblock_code
 {
     foreach $Address (@unfollowed_lbl) {
         def_code() unless (defined($OP[$Address]));
@@ -1880,6 +1910,30 @@ sub def_wordlist_hex(@) 														# value-terminated list
 	insert_empty_line($Address-2);
 }
 
+sub def_WBlist_hex(@) 														# value-terminated list
+{
+	my($EOL,$lbl,$divider_label,$rem,$allow_labeling) = @_;
+	die unless defined($Address);
+	setLabel($lbl,$Address);
+	return unless ($Address>=$MIN_ROM_ADDR && $Address<=$MAX_ROM_ADDR);
+	insert_divider($Address,$divider_label) if defined($divider_label);
+
+	do {
+		$OP[$Address] = '.DWB'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
+		$REM[$Address]=$rem,undef($rem) unless defined($REM[$Address]);
+		my($bAddress) = $Address;
+		for (my($col)=0; WORD($Address)!=$EOL && $col<1; $col++) {
+			push(@{$OPA[$bAddress]},$allow_labeling ? sprintf('$%04X',WORD($Address)) : sprintf('$%04X!',WORD($Address)));
+			push(@{$OPA[$bAddress]},$allow_labeling ? sprintf('$%02X',BYTE($Address+2)) : sprintf('$%02X!',BYTE($Address+2)));
+			$decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+		}
+	} while (WORD($Address)!=$EOL);
+	$OP[$Address] = '.DW'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
+	push(@{$OPA[$Address]},sprintf('$%04X!',WORD($Address)));
+	$decoded[$Address++] = $decoded[$Address++] = 1;
+	insert_empty_line($Address-3);
+}
+
 sub def_ptr_hex(@)                                                                  # pointer (not data word)
 {
     my($lbl,$divider_label,$rem) = @_;
@@ -2061,7 +2115,8 @@ sub def_string(@)
     
     $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
     $REM[$Address] = $rem unless defined($REM[$Address]); 
-    $OP[$Address] = '.STR';
+#   $OP[$Address] = '.STR';
+    $OP[$Address] = ".STR$len";
     my($o);
     $OPA[$Address][0] = "'";
     for ($o=0; $o<$len; $o++) {
@@ -2781,23 +2836,48 @@ sub def_byteblock_code(@)
 
 sub def_wordblock_hex(@)                                                        # data words (not pointers)
 {
-    my($nbytes,$lbl,$divider_label,$rem) = @_;
+    my($nbytes,$lbl,$divider_label,$rem,$allow_labeling) = @_;
     die unless defined($Address);
     setLabel($lbl,$Address);
     $Address+=$nbytes,return unless ($Address>=$MIN_ROM_ADDR && $Address<=$MAX_ROM_ADDR);
     insert_divider($Address,$divider_label) if defined($divider_label);
 
     $OP[$Address] = '.DW'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
-    $OPA[$Address][0] = sprintf('$%04X!',WORD($Address)); $REM[$Address] = $rem unless defined($REM[$Address]);
+    $OPA[$Address][0] = sprintf($allow_labeling?'$%04X':'$%04X!',WORD($Address)); $REM[$Address] = $rem unless defined($REM[$Address]);
     $decoded[$Address++] = $decoded[$Address++] = 1;
 
     for (my($i)=2; $i<$nbytes; $i+=2) {
         $OP[$Address] = '.DW'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
-        $OPA[$Address][0] = sprintf('$%04X!',WORD($Address));
+        $OPA[$Address][0] = sprintf($allow_labeling?'$%04X':'$%04X!',WORD($Address));
         $decoded[$Address++] = $decoded[$Address++] = 1;
     }
     insert_empty_line($Address-2);
 }
+
+
+sub def_wordbyteblock_hex(@)                                                   # data word+bytes (not pointers)
+{
+    my($nbytes,$lbl,$divider_label,$rem,$allow_labeling) = @_;
+    die unless defined($Address);
+    setLabel($lbl,$Address);
+    $Address+=$nbytes,return unless ($Address>=$MIN_ROM_ADDR && $Address<=$MAX_ROM_ADDR);
+    insert_divider($Address,$divider_label) if defined($divider_label);
+
+    $OP[$Address] = '.DWB'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
+    $OPA[$Address][0] = sprintf($allow_labeling?'$%04X':'$%04X!',WORD($Address));
+    $OPA[$Address][1] = sprintf('$%02X!',BYTE($Address+2));
+	$REM[$Address] = $rem unless defined($REM[$Address]);
+    $decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+
+    for (my($i)=2; $i<$nbytes; $i+=2) {
+        $OP[$Address] = '.DW'; $IND[$Address] = $data_indent; $TYPE[$Address] =  $CodeType_data;
+        $OPA[$Address][0] = sprintf($allow_labeling?'$%04X':'$%04X!',WORD($Address));
+	    $OPA[$Address][1] = sprintf('$%02X!',BYTE($Address+2));
+        $decoded[$Address++] = $decoded[$Address++] = $decoded[$Address++] = 1;
+    }
+    insert_empty_line($Address-3);
+}
+
 
 sub def_ptrblock_hex(@)                                                         # block with pointers (not regular data words)
 {
@@ -3078,93 +3158,66 @@ sub scan_next_6800_pointer($$)
 # Game Specific Identifiers
 #----------------------------------------------------------------------
 
-sub substitute_identifiers(@)   # convert generic identifiers like Lamp#01 into their matching aliases/labels
+sub substitute_identifier($)
+{
+	my($strR) = @_;
+	
+	if ($$strR =~ m{Adj#([0-9A-Fa-f]{2,4})}) { 								# adjustments
+		$$strR = $` . $Adj[hex($1)] . $' if defined($Adj[hex($1)]);
+	} elsif ($$strR =~ m{Sol#}) {										   	# solenoids
+		my($pref) = $`;
+		my($num,$len) = ($' =~ m{([0-9A-Fa-f]+)(.*)});
+		$$strR = $pref . $Sol[hex($num)] . $len if defined($Sol[hex($num)]);
+	} elsif ($$strR =~ m{SolCmd#(\d+)}) {								   	# solenoid commands (WPC)
+		$$strR = $` . $SolCmd[$1] . $' if defined($SolCmd[$1]);
+	} elsif ($$strR =~ m{Lamp#([0-9A-Fa-f]{1,3})}) {					   	# lamps
+		if (defined($_cur_RPG)) {
+			die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr)) unless numberp($1);
+			$$strR = $` . $Lamp[$1] . $' if defined($Lamp[$1]);
+		} else {
+			die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr))
+				unless length($1) == 2;
+			$$strR = $` . $Lamp[hex($1)] . $' if defined($Lamp[hex($1)]);
+		}
+	} elsif ($$strR =~ m{Flag#([0-9A-F]{2})}) {								# flags
+		$$strR = $` . $Flag[hex($1)] . $' if defined($Flag[hex($1)]);
+	} elsif ($$strR =~ m{Bitgroup#([0-9A-Fa-f]{2,4})}) {					# bitgroups
+		$$strR = $` . $BitGroup[hex($1)] . $' if defined($BitGroup[hex($1)]);
+	} elsif ($$strR =~ m{Sound#([0-9A-Fa-f]{2,4})}) {						# sounds
+		$$strR = $` . $Sound[hex($1)] . $' if defined($Sound[hex($1)]);
+	} elsif ($$strR =~ m{Switch#([0-9A-F]{2})}) {							# switches
+		$$strR = $` . $Switch[hex($1)] . $' if defined($Switch[hex($1)]);
+	} elsif ($$strR =~ m{Thread#([0-9A-F]{2,4})}) {							# threads
+		$$strR = $` . $Thread[hex($1)] . $' if defined($Thread[hex($1)]);
+	} elsif ($$strR =~ m{Error#([0-9A-F]{2})}) {							# errors (WPC)
+		$$strR = $` . $Error[hex($1)] . $' if defined($Error[hex($1)]);
+	} elsif ($$strR =~ m{Audit#([0-9A-F]{4})}) {							# audits (WPC)
+		$$strR = $` . $Audit[hex($1)] . $' if defined($Audit[hex($1)]);
+	} elsif ($$strR =~ m{DisplayFX#([0-9A-F]{2})}) { 						# DisplayFX animations (WPC)
+		$$strR = $` . $DisplayFX[hex($1)] . $' if defined($DisplayFX[hex($1)]);
+	} elsif ($$strR =~ m{LampFX#([0-9A-F]{2})}) {							# LampFX animations (WPC)
+		$$strR = $` . $LampFX[hex($1)] . $' if defined($LampFX[hex($1)]);
+	} elsif ($$strR =~ m{SolOp#0?([0-7])}) {								# SolOps (S6)
+		$$strR = $` . $SolOp[hex($1)] . $' if defined($SolOp[hex($1)]);
+	} elsif ($$strR =~ m{SoundCmd#0?([0-7])}) {								# SoundCmds (S6)
+		$$strR = $` . $SoundCmd[hex($1)] . $' if defined($SoundCmd[hex($1)]);
+	}
+}
+	
+
+sub substitute_identifiers(@)                                                          # substitute game-specific identifiers
 {
     my($fa,$la) = @_;
     $fa = 0 unless defined($fa);
     $la = $#ROM unless defined($la);
 
     for (my($addr)=$fa; $addr<=$la; $addr++) {
-        if (defined($LBL[$addr])) {															# label substitution
-            if ($LBL[$addr] =~ m{Adj#([0-9A-Fa-f]{2,4})}) {                            # adjustments
-                $LBL[$addr] = $` . $Adj[hex($1)] . $' if defined($Adj[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Sol#}) {                                         # solenoids
-            	my($pref) = $`;
-                my($num,$len) = ($' =~ m{([0-9A-Fa-f]+)(.*)});
-                $LBL[$addr] = $pref . $Sol[hex($num)] . $len if defined($Sol[hex($num)]);
-            } elsif ($LBL[$addr] =~ m{Lamp#([0-9A-Fa-f]{1,3})}) {                      # lamps
-            	if (defined($_cur_RPG)) {
-	           		die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr)) unless numberp($1);
-	                $LBL[$addr] = $` . $Lamp[$1] . $' if defined($Lamp[$1]);
-            	} else {
-            		die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr))
-						unless length($1) == 2;
-	                $LBL[$addr] = $` . $Lamp[hex($1)] . $' if defined($Lamp[hex($1)]);
-	            }
-            } elsif ($LBL[$addr] =~ m{Flag#([0-9A-F]{2})}) { 							# flags
-                $LBL[$addr] = $` . $Flag[hex($1)] . $' if defined($Flag[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Bitgroup#([0-9A-Fa-f]{2,4})}) {                  	# bitgroups
-                $LBL[$addr] = $` . $BitGroup[hex($1)] . $' if defined($BitGroup[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Sound#([0-9A-Fa-f]{2,4})}) {                     	# sounds
-                $LBL[$addr] = $` . $Sound[hex($1)] . $' if defined($Sound[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Switch#([0-9A-F]{2})}) { 							# switches
-                $LBL[$addr] = $` . $Switch[hex($1)] . $' if defined($Switch[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Thread#([0-9A-F]{2,4})}) {						# threads
-                $LBL[$addr] = $` . $Thread[hex($1)] . $' if defined($Thread[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Error#([0-9A-F]{2})}) {                       	# errors (WPC)
-                $LBL[$addr] = $` . $Error[hex($1)] . $' if defined($Error[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{Audit#([0-9A-F]{4})}) {                       	# audits (WPC)
-                $LBL[$addr] = $` . $Audit[hex($1)] . $' if defined($Audit[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{DMD#([0-9A-F]{2})}) {                          	# DMD animations (WPC)
-                $LBL[$addr] = $` . $DMD[hex($1)] . $' if defined($DMD[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{FX#([0-9A-F]{2})}) {                          	# FX animations (WPC)
-                $LBL[$addr] = $` . $FX[hex($1)] . $' if defined($FX[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{SolOp#0?([0-7])}) {                          	# SolOps (S6)
-                $LBL[$addr] = $` . $SolOp[hex($1)] . $' if defined($SolOp[hex($1)]);
-            } elsif ($LBL[$addr] =~ m{SoundCmd#0?([0-7])}) {                          	# SoundCmds (S6)
-                $LBL[$addr] = $` . $SoundCmd[hex($1)] . $' if defined($SoundCmd[hex($1)]);
-            } 
+        if (defined($LBL[$addr])) {													   # label substitution
+        	substitute_identifier(\$LBL[$addr]);
         }
         next unless defined($OP[$addr]);
         for (my($i)=0; $i<@{$OPA[$addr]}; $i++) {
-            if ($OPA[$addr][$i] =~ m{Adj#([0-9A-Fa-f]{2,4})}) {                            # adjustments
-                $OPA[$addr][$i] = $` . $Adj[hex($1)] . $' if defined($Adj[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Sol#}) {                                         # solenoids
-            	my($pref) = $`;
-                my($num,$len) = ($' =~ m{([0-9A-Fa-f]+)(.*)});
-                $OPA[$addr][$i] = $pref . $Sol[hex($num)] . $len if defined($Sol[hex($num)]);
-            } elsif ($OPA[$addr][$i] =~ m{Lamp#([0-9A-Fa-f]{1,3})}) {                      # lamps
-            	if (defined($_cur_RPG)) {
-	           		die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr)) unless numberp($1);
-	                $OPA[$addr][$i] = $` . $Lamp[$1] . $' if defined($Lamp[$1]);
-            	} else {
-            		die(sprintf("%04X: $OP[$addr] @{$OPA[$addr]}",$addr))
-						unless length($1) == 2;
-	                $OPA[$addr][$i] = $` . $Lamp[hex($1)] . $' if defined($Lamp[hex($1)]);
-	            }
-            } elsif ($OPA[$addr][$i] =~ m{Flag#([0-9A-F]{2})}) { 							# flags
-                $OPA[$addr][$i] = $` . $Flag[hex($1)] . $' if defined($Flag[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Bitgroup#([0-9A-Fa-f]{2,4})}) {                  	# bitgroups
-                $OPA[$addr][$i] = $` . $BitGroup[hex($1)] . $' if defined($BitGroup[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Sound#([0-9A-Fa-f]{2,4})}) {                     	# sounds
-                $OPA[$addr][$i] = $` . $Sound[hex($1)] . $' if defined($Sound[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Switch#([0-9A-F]{2})}) { 							# switches
-                $OPA[$addr][$i] = $` . $Switch[hex($1)] . $' if defined($Switch[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Thread#([0-9A-F]{2,4})}) {						# threads
-                $OPA[$addr][$i] = $` . $Thread[hex($1)] . $' if defined($Thread[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Error#([0-9A-F]{2})}) {                       	# errors (WPC)
-                $OPA[$addr][$i] = $` . $Error[hex($1)] . $' if defined($Error[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{Audit#([0-9A-F]{4})}) {                       	# audits (WPC)
-                $OPA[$addr][$i] = $` . $Audit[hex($1)] . $' if defined($Audit[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{DMD#([0-9A-F]{2})}) {                          	# DMD animations (WPC)
-                $OPA[$addr][$i] = $` . $DMD[hex($1)] . $' if defined($DMD[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{FX#([0-9A-F]{2})}) {                          	# FX animations (WPC)
-                $OPA[$addr][$i] = $` . $FX[hex($1)] . $' if defined($FX[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{SolOp#0?([0-7])}) {                          	# SolOps (S6)
-                $OPA[$addr][$i] = $` . $SolOp[hex($1)] . $' if defined($SolOp[hex($1)]);
-            } elsif ($OPA[$addr][$i] =~ m{SoundCmd#0?([0-7])}) {                          	# SoundCmds (S6)
-                $OPA[$addr][$i] = $` . $SoundCmd[hex($1)] . $' if defined($SoundCmd[hex($1)]);
-            } 
+        	substitute_identifier(\$OPA[$addr][$i]);
         }
     }
 }
@@ -3198,38 +3251,46 @@ sub indent($$)
     return $ind;
 }
 
-sub output_aliases($$@)
+sub output_aliases($$$@)
 {
-    my($title,$fmt,@aliases) = @_;
+    my($tag,$title,$fmt,@aliases) = @_;
     return unless (@aliases);
 
-    print(";----------------------------------------------------------------------\n");
-    print("; $title\n");
-    print(";----------------------------------------------------------------------\n\n");
+	my($tp) = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,0) : '';
+    print("$tp;----------------------------------------------------------------------\n");
+    print("$tp; $title\n");
+    print("$tp;----------------------------------------------------------------------\n$tp\n");
 
+	my($line);
     for (my($i)=0; $i<@aliases; $i++) {
         next unless defined($aliases[$i]);
-        $line = '.DEFINE';
+        $line = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$i) : '';
+        $line .= '.DEFINE';
         $line .= indent($line,$hard_tab*$def_name_indent);
         $line .= $aliases[$i];
         $line .= indent($line,$hard_tab*$def_val_indent) . sprintf($fmt,$i);
         print("$line\n");
     }
-    print("\n");
+    $tp = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$#aliases) : '';
+    print("$tp\n");
 }
 
-sub output_keyValue_aliases($@)
+sub output_keyValue_aliases($$@)
 {
-    my($title,%kv) = @_;
+    my($tag,$title,%kv) = @_;
     return unless (%kv);
 
-    print(";----------------------------------------------------------------------\n");
-    print("; $title\n");
-    print(";----------------------------------------------------------------------\n\n");
+	my($tp) = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,0) : '';
+    print("$tp;----------------------------------------------------------------------\n");
+    print("$tp; $title\n");
+    print("$tp;----------------------------------------------------------------------\n$tp\n");
 
+	my($line);
+	my($i) = 0;
     foreach my $key (sort { $kv{$a} <=> $kv{$b} } keys(%kv)) {
         next unless defined($kv{$key});
-        $line = '.DEFINE';
+        $line = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$i++) : '';
+        $line .= '.DEFINE';
         $line .= indent($line,$hard_tab*$def_name_indent);
         $line .= $key;
 		if (numberp($kv{$key})) {
@@ -3239,21 +3300,24 @@ sub output_keyValue_aliases($@)
 	    }
         print("$line\n");
     }
-    print("\n");
+    $tp = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$i-1) : '';
+    print("$tp\n");
 }
 
 sub byHexValue {
     (numberp($Lbl{$a}) ? sprintf('  :%04X',$Lbl{$a}) : $Lbl{$a}) cmp (numberp($Lbl{$b}) ? sprintf('  :%04X',$Lbl{$b}) : $Lbl{$b});
 }
 
-sub output_labels($)
+sub output_labels($$)
 {
-    my($title) = @_;
+    my($tag,$title) = @_;
 
-    print(";----------------------------------------------------------------------\n");
-    print("; $title\n");
-    print(";----------------------------------------------------------------------\n\n");
+	my($tp) = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,0) : '';
+    print("$tp;----------------------------------------------------------------------\n");
+    print("$tp; $title\n");
+    print("$tp;----------------------------------------------------------------------\n$tp\n");
 
+	my($line,$llv);
     foreach my $lbl (sort byHexValue keys %Lbl) {
 #       next if ($lbl =~ m{(.*)\+[1-9]$} && defined($Lbl{$1}));             # e.g. =Lamps+2
 		next if ($lbl =~ m{(.*)[\+-]\d+$}); # && defined($Lbl{$1}));             # e.g. =Lamps+2
@@ -3262,7 +3326,9 @@ sub output_labels($)
 
         if (numberp($lv)) {													# not WPC
             next if defined($ROM[$lv]);                                     # not an external label
-            $line = '.LBL'; 
+            $llv = $lv;
+	        $line = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$lv) : '';
+            $line .= '.LBL'; 
             $line .= indent($line,$hard_tab*$def_name_indent) . $lbl;
             $line .= indent($line,$hard_tab*$def_val_indent) .
                         sprintf(($lv > 0xFF)?"\$%04X\n":"\$%02X\n",$Lbl{$lbl});
@@ -3274,13 +3340,16 @@ sub output_labels($)
             	die unless (substr($lbl,0,2) eq $pg);						# sanity check
             	$lbl = $';
             }
-            $line = '.LBL'; 
+            $llv = $addr;
+	        $line = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$addr) : '';
+            $line .= '.LBL'; 
             $line .= indent($line,$hard_tab*$def_name_indent) . $lbl;
             $line .= indent($line,$hard_tab*$def_val_indent) . $lv . "\n";
         }
         print($line);
     }
-    print("\n");
+    $tp = ($print_addrs && defined($_cur_RPG)) ? sprintf("<%s:%04X>\t",$tag,$llv) : '';
+    print("$tp\n");
 }
 
 sub print_addr($)
@@ -3311,32 +3380,33 @@ sub produce_output(@)
     	if defined($compilation_options);
 
     if ($hdr) {
-        output_aliases('Solenoid Aliases','Sol#%02X',@Sol);
         if (defined($_cur_RPG)) {
-	        output_aliases('Lamp Aliases','Lamp#%d',@Lamp);
+	        output_aliases('LA','Lamp Aliases','Lamp#%d',@Lamp);
         } else {
-	        output_aliases('Lamp Aliases','Lamp#%02X',@Lamp);
+	        output_aliases('LA','Lamp Aliases','Lamp#%02X',@Lamp);
 	    }
-        output_aliases('Flag Aliases','Flag#%02X',@Flag);
-        output_aliases('Bitgroup Aliases','Bitgroup#%02X',@BitGroup);
-        output_aliases('Switch Aliases','Switch#%02X',@Switch);
-        output_aliases('Sound Aliases','Sound#%02X',@Sound);
-        output_aliases('SolOp Aliases','SolOp#%02X',@SolOp);
-        output_aliases('SoundCmd Aliases','%02i',@SoundCmd);
+        output_aliases('FL','Flag Aliases','Flag#%02X',@Flag);
+        output_aliases('BG','Bitgroup Aliases','Bitgroup#%02X',@BitGroup);
+        output_aliases('SW','Switch Aliases','Switch#%02X',@Switch);
+        output_aliases('SL','Solenoid Aliases','Sol#%02X',@Sol);
+        output_aliases('SC','Solenoid Command Aliases','SolCmd#%d',@SolCmd);
+        output_aliases('SN','Sound Aliases','Sound#%02X',@Sound);
+        output_aliases('SO','SolOp Aliases','SolOp#%02X',@SolOp);
+        output_aliases('SD','SoundCmd Aliases','%02i',@SoundCmd);
         if (defined($_cur_RPG)) {
-	        output_aliases('Thread Aliases','Thread#%04X',@Thread);
-	        output_aliases('DMD Aliases','DMD#%02X',@DMD);
-	        output_aliases('FX Aliases','FX#%02X',@FX);
+	        output_aliases('TD','Thread Aliases','Thread#%04X',@Thread);
+	        output_aliases('DM','Display FX Aliases','DisplayFX#%02X',@DisplayFX);
+	        output_aliases('FX','Lamp FX Aliases','LampFX#%02X',@LampFX);
         } else {
-	        output_aliases('Thread Aliases','Thread#%02X',@Thread);
+	        output_aliases('TD','Thread Aliases','Thread#%02X',@Thread);
 	    }
-        output_keyValue_aliases('System Aliases',%systemAliases);
-        output_aliases('Game Adjustment Aliases','Adj#%02X',@Adj);   
-        output_aliases('Audit Aliases','Audit#%04X',@Audit);
+        output_keyValue_aliases('SA','System Aliases',%systemAliases);
+        output_aliases('AD','Game Adjustment Aliases','Adj#%02X',@Adj);   
+        output_aliases('AU','Audit Aliases','Audit#%04X',@Audit);
         $def_val_indent *= 1.53846153846154;								# 20 instead of 13 :)
-		output_aliases('Error Aliases','Error#%02X',@Error);				
+		output_aliases('ER','Error Aliases','Error#%02X',@Error);				
         $def_val_indent /= 1.53846153846154;
-        output_labels("System$WMS_System API (external labels)");           # manually defined labels outside ROM
+        output_labels('LB',"System$WMS_System API (external labels)");           # manually defined labels outside ROM
     }
 
     my($gapLen,$codeStarted);
@@ -3675,9 +3745,11 @@ sub produce_output(@)
 	            	undef($REM[$addr-$col]);
 	            }
 				print("$line\n");
-				push(@{$EXTRA[$addr]},''); push(@{$EXTRA_IND[$addr]},$ind);			# empty line after gap
-				$EXTRA_BEFORE_LABEL[$addr][$#{$EXTRA[$addr]}] = 1;
-				$EXTRA_AFTER_OP[$addr][$#{$EXTRA[$addr]}] = 0;
+				unless (@{$EXTRA[$addr]}) {
+					push(@{$EXTRA[$addr]},''); push(@{$EXTRA_IND[$addr]},$ind);		# empty line after gap unless there's something there already
+					$EXTRA_BEFORE_LABEL[$addr][$#{$EXTRA[$addr]}] = 1;
+					$EXTRA_AFTER_OP[$addr][$#{$EXTRA[$addr]}] = 0;
+				}
 				$addr--;
 ##			} elsif ($print_code && defined($org)) {								# print code in gaps
 ##				print_addr($addr) if ($print_addrs);								# code disabled 07/20 to avoid zillions of single-byte no-code lines
